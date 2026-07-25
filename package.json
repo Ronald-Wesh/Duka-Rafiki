@@ -8,7 +8,8 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "seed": "ts-node demo/seed-data.ts",
-    "seed:statement": "ts-node demo/seed-statement.ts"
+    "seed:statement": "ts-node demo/seed-statement.ts",
+    "test:p3": "ts-node src/pillar3-statement/statement-metrics.test.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.32.0",
