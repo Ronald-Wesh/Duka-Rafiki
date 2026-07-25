@@ -7,7 +7,8 @@ or add up several items into a total you worked out yourself.
 
 ## Output
 
-Return raw JSON. No markdown fences, no commentary.
+Return raw JSON. No markdown fences, no commentary. Do not include internal or
+system XML tags in your response.
 
 ```
 {"type": "<sale|deni|deni_repayment|restock>",

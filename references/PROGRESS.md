@@ -1,7 +1,7 @@
 # P0 Progress Log
 
 Last updated: 2026-07-26
-Current status (one line): **Meta webhook verification PASSED**; credentials validated read-only; full inbound routing verified locally across 8 payload shapes — only the real phone-to-bot round trip is left, which needs a live tunnel + an allowlisted handset
+Current status (one line): **prompts now verified against the live Claude API (7/7)** after fixing a client bug that broke every model call; Meta verification passed; only the real phone-to-bot round trip is left, which needs a live tunnel
 
 ## Done
 
@@ -24,6 +24,7 @@ Current status (one line): **Meta webhook verification PASSED**; credentials val
 
 ## Next up
 
+0. ✅ **Prompts verified live** — `npm run check:prompts:live` is 7/7 against the real API: the DD/MM date trap, refusal-to-multiply, and a summary that quotes figures without computing percentages or using scoring language. Re-run after any prompt edit.
 1. **Finish the Meta acceptance check** — needs real credentials and a public tunnel, so it can't be done unattended:
    - fill `META_*` in `.env`, start the tunnel, set the callback URL to `https://<tunnel>/webhook` with the same verify token, click **Verify and Save**
    - text the test number from an allowlisted phone and confirm the `[webhook] inbound message {...}` line appears
@@ -80,6 +81,10 @@ Current status (one line): **Meta webhook verification PASSED**; credentials val
   - Approved templates include **`hello_world`** (UTILITY) plus Jasper's Market samples. Useful: `hello_world` can open a conversation outside the 24-hour window, though it can't carry custom content. A real weekly-regulars push would still need its own approved template.
   - Worth re-running this check before the demo — an expired token looks exactly like a broken webhook: `curl -s "https://graph.facebook.com/v25.0/$META_PHONE_NUMBER_ID?fields=display_phone_number" -H "Authorization: Bearer $META_ACCESS_TOKEN"`
 
+- **First live phone test FAILED — nothing reached the app, and it was not a code fault.** Both the server and the tunnel were down when the message was sent. Two lessons:
+  - **Run the server in a real terminal** (`npm run dev`). Background launches from tooling do not survive here: `nohup ... &` inside a `wsl.exe -e bash -lc` session dies when that session ends, and a hidden `Start-Process wsl.exe` never started the process at all. Don't rely on a detached server for a live test.
+  - **The tunnel is not persistent either.** Verification passing once does not mean the tunnel is still up — Meta only calls `GET /webhook` at verify time. Before any phone test, `curl` the public URL and confirm you get your own response, not ngrok's placeholder.
+- **No authenticated tunnel exists on this machine.** Only one `ngrok.exe` (winget, **v3.3.1**, unauthenticated), and **no `ngrok.yml` in any standard location** on Windows or WSL — so no saved authtoken. No cloudflared/localtunnel/tailscale either. v3.3.1 also predates `*.ngrok-free.dev` static domains, so it likely cannot bind the reserved URL even once authenticated. Whatever tunnelled successfully during verification is not reproducible from what's on disk — worth writing down when it's next started. `winget upgrade Ngrok.Ngrok` then `ngrok config add-authtoken <token>` is the straightforward fix.
 - **Testing against live credentials: force dry-run.** With a real `META_ACCESS_TOKEN`, any inbound fixture triggers a genuine outbound send to whatever `from` number the payload carries — and the earlier fixtures used `254712345678`, a plausible real Kenyan number. Run local tests as `META_ACCESS_TOKEN="" npx ts-node src/index.ts` so replies are logged instead of sent.
 
 - ### 🔴 SWITCHED FROM TWILIO TO META WHATSAPP CLOUD API (2026-07-26)
@@ -120,6 +125,11 @@ Current status (one line): **Meta webhook verification PASSED**; credentials val
 - **Prompts refuse rather than compute.** `soda mbili 50` returns an error instead of guessing 100, and `phrase-summary` won't turn "23 of 28 days" into "82%". Both would be *plausible* numbers with no ledger row behind them, which is exactly what breaks the "every figure is auditable" claim. If a pillar owner finds a prompt "unhelpfully strict", that strictness is the point — do the arithmetic in code.
 - **The M-Pesa date trap:** Kenyan SMS dates are `D/M/YY`, so `3/7/26` is 3 July, not 7 March. Called out explicitly in the prompt and asserted in the live check. A silent month/day swap would scatter transactions across the wrong days and quietly wreck reconciliation.
 - **`npm run check:prompts` scans the whole codebase for scoring vocabulary** (score / band / rating / creditworthy / risk level) outside comments, because README §13 makes that a product requirement. Verified it actually catches a violation rather than passing vacuously. Files that name the words in order to forbid them are exempt by filename — add to `EXEMPT` if you write another.
+- ### 🔴 `temperature` is REMOVED on Claude Sonnet 5 / Opus 5 — it 400s
+  Every Claude call was failing with `` `temperature` is deprecated for this model `` because `claude-client.ts` set `temperature: 0` on every request. **Offline checks passed the whole time** — the prompt files loaded fine and nothing exercised the API. Only `npm run check:prompts:live` caught it. There is no replacement parameter: steer with the prompt, and control depth with `output_config.effort`. Don't reintroduce `temperature`, `top_p`, or `top_k`.
+- **Extraction runs `effort: "low"` + `thinking: {type: "disabled"}`** (the `askClaudeJson` default). Thinking is *on by default* on these models, and for a per-message SMS parse that's latency the owner feels while waiting for a reply. Phrasing calls leave thinking at its default.
+- **Read the first *text* block, not `content[0]`.** With thinking enabled the first block can be a thinking block, so blind indexing silently returns `""`.
+- **Model is `claude-sonnet-5`, overridable via `ANTHROPIC_MODEL`.** Sonnet is fast and cheap enough for per-message parsing; set `ANTHROPIC_MODEL=claude-opus-5` for more capability if the added latency is acceptable. This was a deliberate latency choice, not an oversight.
 - **Considered and skipped: a `message_log` table** for auditing raw inbound messages. It's a schema change and P1 owns the schema, so it needs a team heads-up first rather than being slipped in. Currently everything is `console.log` only — fine for the demo, but there's no durable record of an unparsed message.
 
 ---

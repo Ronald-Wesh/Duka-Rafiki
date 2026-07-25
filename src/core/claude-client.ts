@@ -3,7 +3,10 @@ import fs from "fs";
 import path from "path";
 import { config } from "./config";
 
-const MODEL = "claude-sonnet-5";
+// Sonnet 5 is fast and cheap enough for per-message SMS parsing, which matters
+// when a trader is waiting on a WhatsApp reply. Override with ANTHROPIC_MODEL
+// (e.g. claude-opus-5) if you want more capability and can absorb the latency.
+const MODEL = process.env.ANTHROPIC_MODEL ?? "claude-sonnet-5";
 
 // Lazy: constructing without a key is harmless, but failing at the first call
 // with a vague SDK error at 3am is not. Fail loudly and early instead.
@@ -30,10 +33,21 @@ export function loadPrompt(name: string): string {
   return fs.readFileSync(file, "utf-8");
 }
 
+export type Effort = "low" | "medium" | "high" | "xhigh" | "max";
+
 export interface AskOptions {
   maxTokens?: number;
-  /** 0 for extraction (default), higher only where wording should vary. */
-  temperature?: number;
+  /**
+   * Reasoning depth. `low` is right for extraction; leave unset for phrasing.
+   *
+   * NOTE: there is deliberately no `temperature` here. It is removed on
+   * Sonnet 5 / Opus 5 and a non-default value returns a 400 — the whole client
+   * was failing on `temperature is deprecated for this model`. Steer output
+   * through the prompt, not sampling parameters.
+   */
+  effort?: Effort;
+  /** Extraction disables thinking for latency; phrasing leaves it adaptive. */
+  disableThinking?: boolean;
 }
 
 // The model does language only — parsing, classifying, phrasing. It is never
@@ -46,12 +60,16 @@ export async function askClaude(
   const message = await getClient().messages.create({
     model: MODEL,
     max_tokens: opts.maxTokens ?? 1024,
-    temperature: opts.temperature ?? 0,
     system: loadPrompt(promptName),
     messages: [{ role: "user", content: input }],
+    ...(opts.effort ? { output_config: { effort: opts.effort } } : {}),
+    ...(opts.disableThinking ? { thinking: { type: "disabled" as const } } : {}),
   });
-  const block = message.content[0];
-  return block?.type === "text" ? block.text.trim() : "";
+
+  // Take the first text block rather than content[0] — with thinking enabled the
+  // first block can be a thinking block, and indexing blindly returns "".
+  const text = message.content.find((b) => b.type === "text");
+  return text?.type === "text" ? text.text.trim() : "";
 }
 
 /**
@@ -82,7 +100,13 @@ export async function askClaudeJson<T>(
   input: string,
   opts: AskOptions = {}
 ): Promise<T> {
-  const raw = await askClaude(promptName, input, opts);
+  // Extraction defaults: no thinking, lowest effort. A forwarded SMS should come
+  // back in well under a second — the owner is waiting on the reply.
+  const raw = await askClaude(promptName, input, {
+    effort: "low",
+    disableThinking: true,
+    ...opts,
+  });
   const json = extractJson(raw);
   try {
     return JSON.parse(json) as T;

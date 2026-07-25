@@ -6,7 +6,8 @@ or infer a figure that is not literally present in the text.
 
 ## Output
 
-Return raw JSON. No markdown fences, no commentary, no explanation.
+Return raw JSON. No markdown fences, no commentary, no explanation. Do not
+include internal or system XML tags in your response.
 
 On success:
 
