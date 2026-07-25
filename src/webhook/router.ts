@@ -108,11 +108,18 @@ async function dispatch(intent: Intent, body: string): Promise<string> {
 
     case "regulars":
       return pillarCall("Orodha ya wateja", async () => {
-        const { detectRepeatVisits } = await import(
-          "../pillar2-retention/repeat-detection"
+        // P2's seam. Reads the ledger, computes the figures, and phrases them —
+        // returning a message that is already sendable. Works without an
+        // ANTHROPIC_API_KEY (plainer wording, same figures) so this path never
+        // depends on the model being reachable.
+        const { getWeeklyRegularsMessage } = await import(
+          "../pillar2-retention/service"
         );
-        const ids = detectRepeatVisits(7);
-        return `Una wateja ${ids.length} wanaorudi wiki hii.`;
+        const { text, promo } = await getWeeklyRegularsMessage();
+
+        // The promo is a draft for the owner to edit and forward herself — P2
+        // never sends to customers, and nothing here does either.
+        return promo ? `${text}\n\n---\n${promo.text}` : text;
       });
 
     case "report":

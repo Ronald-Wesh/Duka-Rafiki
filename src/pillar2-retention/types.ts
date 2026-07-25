@@ -10,7 +10,7 @@
  * Everything below the re-export is P2's own output, which P2 owns outright.
  */
 
-import type { Channel, Customer } from '../core/types';
+import type { Channel, Customer, Transaction } from '../core/types';
 
 export type { Channel, Customer, Transaction, TransactionType } from '../core/types';
 
@@ -91,6 +91,30 @@ export interface RegularsSummary {
    * someone who has gone quiet is by definition absent from this week's list.
    */
   lapsing: RankedRegular[];
+}
+
+/**
+ * One set of `customers` rows judged to be the same human and folded together
+ * for presentation by `canonicalizeCustomers`.
+ *
+ * Recorded so the collapse is auditable rather than invisible — a merge changes
+ * what the owner sees, so it should always be possible to say which rows were
+ * combined and why.
+ */
+export interface CustomerMerge {
+  /** The row kept — always the lowest id, i.e. the earliest sighting. */
+  canonicalId: number;
+  /** Rows folded into it. Never empty. */
+  mergedIds: number[];
+  /** The name the owner will see for the merged customer. */
+  displayName: string;
+}
+
+/** An in-memory ledger with duplicate customer rows folded together. */
+export interface CanonicalLedger {
+  customers: Customer[];
+  transactions: Transaction[];
+  merges: CustomerMerge[];
 }
 
 /**
