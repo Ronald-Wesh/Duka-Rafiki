@@ -1,7 +1,7 @@
 # P0 Progress Log
 
 Last updated: 2026-07-26
-Current status (one line): **transport switched from Twilio to Meta Cloud API** — handshake + inbound receipt built and verified locally against fixture payloads; awaiting real credentials, a tunnel, and a live prompt run
+Current status (one line): GET handshake **confirmed working on localhost with the real token**; Meta verification is blocked purely on the tunnel — no ngrok agent is running, so the public URL serves an ngrok placeholder and never reaches the server
 
 ## Done
 
@@ -51,6 +51,26 @@ Current status (one line): **transport switched from Twilio to Meta Cloud API** 
 - **All**: seed data is ready — run `npm run db:reset && npm run check:seed` and sanity-check your pillar against it.
 
 ## Gotchas / decisions made
+
+- ### Meta verification failure (2026-07-26) — root cause was the TUNNEL, not the handler
+  Symptom: "The callback URL or verify token couldn't be validated" on **Verify and Save**.
+
+  **The `GET /webhook` handler was never broken.** Proven by testing both layers separately with the real token from `.env`:
+
+  | Test | Result |
+  |---|---|
+  | `localhost:3000/webhook?hub.mode=subscribe&hub.verify_token=<real>&hub.challenge=X` | `200`, `text/plain`, body `X`, `match: true` ✅ |
+  | Same query through the public ngrok URL | `200` but `text/html` — ngrok's own page, **and no entry in the server log at all** ❌ |
+
+  Two faults, both outside the code:
+  1. **The server wasn't running.** Nothing listening on port 3000, no node process.
+  2. **No ngrok agent was running.** `ngrok.exe` is installed on Windows (winget) but no process and no agent API on `:4040`, in WSL or Windows. The URL returned `<title>Your new ngrok Cloud Endpoint!</title>` — a dashboard-created **Cloud Endpoint** with no local agent bound, serving a placeholder instead of forwarding to `localhost:3000`.
+
+  **Why this specific error message is misleading:** Meta received `HTTP 200` — so the URL was reachable — but the body was ngrok's HTML rather than the challenge string. Meta reports that as a verify-token problem, which sends you hunting for a token mismatch that doesn't exist. **Always check what the tunnel returns before suspecting the token.** A one-line `curl` of the public URL distinguishes the two in seconds.
+
+  **Env vars were fine throughout**: `META_VERIFY_TOKEN` set (`dukarafiki`), LF line endings, no stray quotes or whitespace, all four `META_*` present.
+
+  **Temporary debug instrumentation is currently in the GET handler** — logs the full query object, path, `originalUrl`, host, user-agent, and a `received`/`expected`/`match` token comparison. Purpose: silence in the log means the request never arrived (tunnel/URL problem); wrong values mean a genuine token mismatch. **Remove this block once verification passes** — it prints the verify token to stdout.
 
 - ### 🔴 SWITCHED FROM TWILIO TO META WHATSAPP CLOUD API (2026-07-26)
   **Tell the team — this contradicts the locked spec.** README §6 says "Twilio WhatsApp sandbox (chosen — faster to demo, no business verification). **Do not also build the Meta Cloud API path**", and SKILL.md lists "Twilio sandbox only. No Meta Cloud API path" under non-negotiables. Decision made by P0 (Person D) at the owner's direction; recorded here rather than left implicit. Twilio transport code has been **removed**, not left dual-wired.
