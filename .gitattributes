@@ -1,0 +1,23 @@
+# Normalise line endings so Windows and macOS/Linux teammates don't generate
+# whole-file diffs on every commit. Do NOT set core.autocrlf locally — this
+# file is the shared, checked-in source of truth.
+* text=auto eol=lf
+
+# Windows-only scripts keep CRLF
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Binary — never diff or line-ending-convert
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.pdf binary
+*.db binary
+*.sqlite binary
+*.ogg binary
+*.mp3 binary
+*.m4a binary
+
+# Generated lockfile: collapse in PR diffs
+package-lock.json linguist-generated=true -diff
