@@ -138,10 +138,11 @@ db.transaction(() => {
       );
     }
 
-    // Owner closes most days. Three fixed days land well outside tolerance so
-    // reconciliation accuracy is never a suspicious 100% — a perfect record
-    // reads as fabricated, and the variance conversation is part of the pitch.
-    if (rng() < 0.88) {
+    // Owner closes most days. The three OFF_BY_A_LOT days are forced closed
+    // (not left to the roll) so reconciliation accuracy is never a suspicious
+    // 100% — a perfect record reads as fabricated, and the variance
+    // conversation is part of the pitch.
+    if (OFF_BY_A_LOT.has(date) || rng() < 0.88) {
       const drift = OFF_BY_A_LOT.has(date)
         ? randInt(60, 400) * (rng() < 0.5 ? -1 : 1)
         : randInt(-40, 40);
