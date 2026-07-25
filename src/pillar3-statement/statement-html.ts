@@ -46,16 +46,16 @@ function salesChart(daily: DailyTotal[]): string {
       const barHeight = max === 0 ? 0 : Math.max(1, (d.total / max) * (height - 20));
       const x = i * (barWidth + gap);
       const y = height - barHeight;
-      return `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barWidth.toFixed(1)}" height="${barHeight.toFixed(1)}" rx="1"><title>${d.date}: ${kes(d.total)}</title></rect>`;
+      return `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barWidth.toFixed(1)}" height="${barHeight.toFixed(1)}" rx="1"><title>${escapeHtml(d.date)}: ${kes(d.total)}</title></rect>`;
     })
     .join("");
 
   return `
     <svg viewBox="0 0 ${width} ${height}" class="chart" role="img"
-         aria-label="Daily sales from ${daily[0].date} to ${daily[daily.length - 1].date}">
+         aria-label="Daily sales from ${escapeHtml(daily[0].date)} to ${escapeHtml(daily[daily.length - 1].date)}">
       ${bars}
     </svg>
-    <div class="chart-axis"><span>${daily[0].date}</span><span>peak ${kes(max)}</span><span>${daily[daily.length - 1].date}</span></div>`;
+    <div class="chart-axis"><span>${escapeHtml(daily[0].date)}</span><span>peak ${kes(max)}</span><span>${escapeHtml(daily[daily.length - 1].date)}</span></div>`;
 }
 
 export function renderStatementPage(statement: Statement): string {
@@ -90,7 +90,7 @@ export function renderStatementPage(statement: Statement): string {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Transaction Record — ${m.period_start} to ${m.period_end}</title>
+<title>Transaction Record — ${escapeHtml(m.period_start)} to ${escapeHtml(m.period_end)}</title>
 <style>
   :root { color-scheme: light; }
   body { font: 16px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -123,7 +123,7 @@ export function renderStatementPage(statement: Statement): string {
 <body>
 <main>
   <h1>Transaction Record</h1>
-  <p class="period">${m.period_start} to ${m.period_end} &middot; generated ${escapeHtml(statement.generated_at)}</p>
+  <p class="period">${escapeHtml(m.period_start)} to ${escapeHtml(m.period_end)} &middot; generated ${escapeHtml(statement.generated_at)}</p>
 
   <table>${tableRows}</table>
 
