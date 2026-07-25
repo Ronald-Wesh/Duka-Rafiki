@@ -12,6 +12,7 @@
     "start": "node dist/index.js",
     "seed": "ts-node demo/seed-data.ts",
     "check:intents": "ts-node demo/check-intents.ts",
+    "check:seed": "ts-node demo/check-seed.ts",
     "db:reset": "rm -f duka.db* && ts-node demo/seed-data.ts"
   },
   "dependencies": {
