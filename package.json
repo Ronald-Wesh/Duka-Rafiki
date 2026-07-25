@@ -3,11 +3,16 @@
   "version": "0.1.0",
   "private": true,
   "type": "commonjs",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "dev": "ts-node-dev --respawn src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "seed": "ts-node demo/seed-data.ts"
+    "seed": "ts-node demo/seed-data.ts",
+    "check:intents": "ts-node demo/check-intents.ts",
+    "db:reset": "rm -f duka.db* && ts-node demo/seed-data.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.32.0",
