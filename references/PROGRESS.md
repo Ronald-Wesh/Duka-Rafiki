@@ -1,7 +1,7 @@
 # P0 Progress Log
 
 Last updated: 2026-07-26
-Current status (one line): all four prompt files written and P1 can wire real parsing; Twilio/ngrok + a live prompt run against the real API are the two untested surfaces
+Current status (one line): **transport switched from Twilio to Meta Cloud API** — handshake + inbound receipt built and verified locally against fixture payloads; awaiting real credentials, a tunnel, and a live prompt run
 
 ## Done
 
@@ -14,7 +14,8 @@ Current status (one line): all four prompt files written and P1 can wire real pa
 - ✅ **Install + boot verified** — `npm install`, `npm run seed` (rows confirmed in DB), and `npm run dev` → `/health` returns `{"ok":true}`. First time the scaffold has actually run; before this it was typecheck-only.
 - ✅ **6. router.ts intent dispatch + fail-soft** — `intent.ts` classifies 8 intents deterministically (no model call — a misroute on stage is worse than a rigid match). Router dispatches to pillar handlers via `pillarCall()`, which degrades a not-yet-implemented pillar into an honest "haijahifadhiwa bado" notice instead of silence. Verified end to end against a live server: help / mpesa_sms / sale / report / unknown / media all route and reply correctly.
 - ✅ **Routing regression harness** — `npm run check:intents`, 18 cases including three real-shaped M-Pesa formats. Currently 18/18.
-- ✅ **whatsapp-client dry-run mode** — no Twilio creds means it logs what it *would* send rather than throwing, so the router is testable before the sandbox exists.
+- ✅ **whatsapp-client dry-run mode** — no credentials means it logs what it *would* send rather than throwing, so the router is testable before the transport exists.
+- ✅ **5/7 (Meta version). Cloud API webhook transport** — `GET /webhook` does Meta's `hub.challenge` handshake against `META_VERIFY_TOKEN` (raw `text/plain` echo — a JSON-wrapped body fails verification); `POST /webhook` parses Meta's nested JSON defensively and acks with a bare 200 before any processing. Outbound via Graph API `v25.0`. Verified locally against fixture payloads: handshake 200 + echo, wrong/absent token 403, text message extracted, delivery-status callback ignored cleanly, `audio` type routed to the not-ready path, and empty/garbage payloads handled without throwing. Intent dispatch was left intact — it takes a string and is transport-agnostic.
 - ✅ **8. Real seed data** — 28 days, ~600 transactions, 12 customers. Deterministic (fixed-seed PRNG, verified byte-identical across runs). Includes: quiet Sundays / market-day and payday peaks, 42% M-Pesa with real-format SMS bodies, Swahili/Sheng cash phrasing, deni with running per-customer balances, weekly wholesale restock sized to a realistic margin, 5 unclosed days and non-zero variances, and ~4% unconfirmed entries. `npm run check:seed` asserts 12 integrity properties.
 
 ## In progress
@@ -23,9 +24,13 @@ Current status (one line): all four prompt files written and P1 can wire real pa
 
 ## Next up
 
-1. **Run `npm run check:prompts:live`** as soon as an `ANTHROPIC_API_KEY` is in `.env`. **The prompts have never been run against the real model** — they're written and self-consistent, but unverified. Do this before relying on them.
-2. **5 + 7. Twilio sandbox + ngrok** — the last external dependency and the only surface never tested. Needs credentials + the demo phone, so it can't be done unattended.
-3. **9. demo-script.md** — the exact 3-minute conversation. Now writable, since the seed data it has to reference exists.
+1. **Finish the Meta acceptance check** — needs real credentials and a public tunnel, so it can't be done unattended:
+   - fill `META_*` in `.env`, start the tunnel, set the callback URL to `https://<tunnel>/webhook` with the same verify token, click **Verify and Save**
+   - text the test number from an allowlisted phone and confirm the `[webhook] inbound message {...}` line appears
+   - **add your own number to the test number's recipient allowlist first** — Meta test numbers only message pre-verified recipients, and messages to anyone else fail silently
+2. **Run `npm run check:prompts:live`** once `ANTHROPIC_API_KEY` is in `.env`. **The prompts have never been run against the real model** — written and self-consistent, but unverified.
+3. **Check whether the weekly regulars push needs a Meta template** (see Gotchas). This affects demo beat 3 and may need lead time for approval.
+4. **9. demo-script.md** — the exact 3-minute conversation. Now writable, since the seed data it references exists.
 
 ## Shared contract changes (flag to team)
 
@@ -46,6 +51,30 @@ Current status (one line): all four prompt files written and P1 can wire real pa
 - **All**: seed data is ready — run `npm run db:reset && npm run check:seed` and sanity-check your pillar against it.
 
 ## Gotchas / decisions made
+
+- ### 🔴 SWITCHED FROM TWILIO TO META WHATSAPP CLOUD API (2026-07-26)
+  **Tell the team — this contradicts the locked spec.** README §6 says "Twilio WhatsApp sandbox (chosen — faster to demo, no business verification). **Do not also build the Meta Cloud API path**", and SKILL.md lists "Twilio sandbox only. No Meta Cloud API path" under non-negotiables. Decision made by P0 (Person D) at the owner's direction; recorded here rather than left implicit. Twilio transport code has been **removed**, not left dual-wired.
+
+  **If you assumed Twilio's payload shape, it has changed completely:**
+  | | Twilio (old) | Meta (now) |
+  |---|---|---|
+  | Body format | `application/x-www-form-urlencoded` | JSON |
+  | Sender | `req.body.From` = `whatsapp:+2547...` | `entry[0].changes[0].value.messages[0].from` = `2547...` (no `+`, no prefix) |
+  | Text | `req.body.Body` | `...messages[0].text.body` |
+  | Media | `NumMedia` / `MediaUrl0` | `messages[0].type` + `messages[0].audio.id` (media must be fetched from Graph) |
+  | Sender name | not provided | `...value.contacts[0].profile.name` |
+  | Reply | TwiML XML or REST | Graph API POST, always out-of-band |
+  | Verification | none | `GET /webhook` `hub.challenge` handshake |
+
+  **Env vars changed**: `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` / `TWILIO_WHATSAPP_FROM` are gone, replaced by `META_VERIFY_TOKEN`, `META_ACCESS_TOKEN`, `META_PHONE_NUMBER_ID`, `META_WABA_ID`. Re-copy `.env.example`.
+
+- **Meta gotchas that can break the demo** — worth resolving early, not at hour 20:
+  - **Test numbers only message an allowlist.** Add every demo phone to the recipient list in the dashboard first; sends to anyone else fail.
+  - **The 24-hour window.** Free-form text is only allowed within 24h of the user's last message. A *business-initiated* message outside that window needs a **pre-approved template** — which is exactly what demo beat 3 (the weekly "your top regulars" push) is. `sendWhatsapp()` sends free-form text and does **not** handle templates. Either trigger that beat as a reply to an owner message, or get a template approved.
+  - **The API Setup access token expires in 24 hours.** Fine for one demo night; use a System User token if it needs to outlive that. A dead token looks exactly like a broken webhook.
+  - **Verification needs the raw challenge** as `text/plain`. Returning JSON or a quoted string fails "Verify and Save" with no useful error.
+  - **Meta disables a webhook that is slow or errors repeatedly**, so `POST /webhook` acks 200 before doing anything. Don't make it synchronous.
+  - **Not implemented: `X-Hub-Signature-256` verification.** The endpoint currently trusts any caller who knows the URL. Acceptable for a hackathon tunnel; would not be for production.
 
 - **Run everything inside WSL on the Linux path** (`~/claude-hackathon/Duka-Rafiki`), never the UNC `\\wsl.localhost\...` path. Three separate failures come from getting this wrong: Windows `node-gyp` builds `better-sqlite3` into `C:\Windows` and hits `EPERM`; SQLite throws `database is locked` over the 9p boundary even single-process; Ubuntu's system Node is v18. Full writeup in `docs/setup.md`, pinned via `.nvmrc` (Node 20) + `engines`.
 - **Windows' Node leaks onto the WSL `PATH`** — `node -v` can report v24 even after `nvm use`. Pin explicitly if behaviour looks wrong.
@@ -71,15 +100,16 @@ Current status (one line): all four prompt files written and P1 can wire real pa
 - [x]   2. db.ts
 - [x]   3. types.ts (Transaction, Customer, ReconciliationResult, Statement)
 - [x]   4. claude-client.ts + /prompts structure — loader hardened, all 4 prompt files written (unverified against the live API)
-- [ ]   5. Twilio WhatsApp sandbox joined + tested
-- [x]   6. webhook/router.ts + whatsapp-client.ts — intent dispatch + fail-soft done, verified end to end
-- [ ]   7. ngrok tunnel working + documented in .env.example
+- [~]   5. ~~Twilio sandbox~~ → **Meta Cloud API**: handshake + receipt built and verified against fixtures; real dashboard verification and a live inbound message still pending (needs credentials + tunnel)
+- [x]   6. webhook/router.ts + whatsapp-client.ts — intent dispatch + fail-soft done; transport now Meta Cloud API (GET verify + POST receive, Graph API v25.0 outbound)
+- [ ]   7. tunnel working + callback URL registered in the Meta dashboard
 - [x]   8. demo/seed-data.ts (3-4 weeks, Swahili/Sheng) — 28 days, deterministic, 12 integrity checks
 - [ ]   9. demo/demo-script.md — beats outlined, exact conversation not written
 - [ ]   10. Pre-flight check (~2am): sandbox joined, tunnel up, fresh-clone seed test
 
 ## Not in the original checklist, but needed
 
-- **Voice notes.** Team spec section 3 lists voice as a *primary* input, but the webhook only reads `req.body.Body`. Twilio delivers audio as `MediaUrl0` — needs download + transcription. The router now *detects* media and replies honestly, but nothing transcribes it. Unscoped work; raise with the team whether it's in for the demo or text-only.
+- **Voice notes.** Team spec §3 lists voice as a *primary* input. The router now detects a non-text message type and replies honestly, but nothing transcribes it. On Meta this is a two-step fetch: `GET /{media-id}` for a short-lived URL, then download it with the bearer token — more work than Twilio's single `MediaUrl0`. Unscoped; raise with the team whether it's in for the demo or text-only.
+- **Leftover: `src/index.ts:9` still mounts `express.urlencoded`**, which was only there for Twilio's form bodies. Harmless (`express.json()` handles Meta), but it's a one-line removal and misleading to leave. Not touched because `src/index.ts` is outside the `/src/webhook` + `/src/core` scope this task was limited to. Same for the now-unused `twilio` dependency in `package.json`.
 - ✅ **Fail-soft webhook** — done as part of task 6.
 - **Day-close reported total** has nowhere to go (see "Needs from other pillars"). This blocks the reconciliation demo beat, so it needs resolving with P1 early rather than at hour 20.
