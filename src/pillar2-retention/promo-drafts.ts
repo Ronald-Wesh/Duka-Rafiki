@@ -101,11 +101,16 @@ function visitWord(count: number): string {
  * fallback path doesn't also contain.
  */
 export function renderFactsBlock(summary: RegularsSummary): string {
+  // `namedCustomerSpend` is deliberately NOT shown to the model. It covers only
+  // customer-linked rows, so an owner reading it in a WhatsApp message would
+  // reasonably mistake it for her weekly takings — which it is not (P1 owns that
+  // figure). It also directly contradicts the prompt's "do not add a total"
+  // instruction. It stays on `RegularsSummary` for callers that know the
+  // difference; it never reaches owner-facing text.
   const lines: string[] = [
     `Week: ${summary.periodStart} to ${summary.periodEnd}`,
     `Named regulars seen this week: ${summary.namedCustomerCount}`,
     `Of those, repeat visitors: ${summary.repeatCustomerCount}`,
-    `Spend by named customers this week: ${formatKes(summary.namedCustomerSpend)}`,
     '',
     'Top regulars (already ranked — keep this order):',
   ];
@@ -190,17 +195,29 @@ export function renderRegularsSummaryText(summary: RegularsSummary): string {
 /**
  * Every figure that must appear verbatim in the owner-facing weekly message.
  *
- * Deliberately excludes the lapsing-customer day counts, which the promo prompt
- * is instructed *not* to mention.
+ * Scope is deliberately narrow — this list is an invariant, not a wish list.
+ * Requiring a figure that a legitimately-worded message need not contain would
+ * reject every phrasing including the deterministic fallback's own, which is
+ * exactly the bug `smoke-check.ts` caught when `namedCustomerSpend` was in here.
+ *
+ * Included: each listed regular's display name and money figure. Both are
+ * distinctive strings — a name, or `KES` plus grouped digits — so substring
+ * matching on them is meaningful.
+ *
+ * Also included, but weakly: each regular's visit count. A bare small integer
+ * like `3` will match incidentally against almost any prose (it appears inside
+ * `KES 300`), so its presence is close to guaranteed. It is listed for
+ * completeness rather than protection — the real defence for counts is that the
+ * model never computes them.
+ *
+ * Excluded: the aggregate counts and `namedCustomerSpend` (never shown to the
+ * model, see `renderFactsBlock`), and the lapsing day counts, which the promo
+ * prompt is explicitly instructed *not* to mention.
  */
 export function figuresToPreserve(summary: RegularsSummary): string[] {
-  const figures = [
-    formatKes(summary.namedCustomerSpend),
-    String(summary.namedCustomerCount),
-    String(summary.repeatCustomerCount),
-  ];
+  const figures: string[] = [];
   for (const regular of summary.regulars) {
-    figures.push(String(regular.visitCount), formatKes(regular.totalSpend), regular.displayName);
+    figures.push(regular.displayName, formatKes(regular.totalSpend), String(regular.visitCount));
   }
   return [...new Set(figures)];
 }

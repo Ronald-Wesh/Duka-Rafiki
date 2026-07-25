@@ -76,6 +76,11 @@ export interface RegularsSummary {
    * Total value of goods taken by *named* customers in the window. Anonymous
    * cash is excluded by definition — P2 can only see customer-linked rows, so
    * this is deliberately NOT the shop's total sales. P1 owns that figure.
+   *
+   * **Not owner-facing.** It is never shown to Claude and never appears in a
+   * WhatsApp message, precisely because an owner reading it would reasonably
+   * mistake it for her weekly takings. Use it only where that distinction is
+   * understood.
    */
   namedCustomerSpend: number;
   /** True if any contributing row was unconfirmed. */

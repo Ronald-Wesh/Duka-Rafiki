@@ -134,26 +134,58 @@ the owner separated on purpose.
 Open question for P1: who resolves these — a bot prompt to the owner, or a manual
 fix? P2 can surface them either way.
 
+## Verifying it
+
+```bash
+npx tsc --noEmit                                    # clean
+npx ts-node src/pillar2-retention/smoke-check.ts    # 43/43 checks pass
+```
+
+`smoke-check.ts` is a known-answer check: every figure is asserted against a
+hand-computed expected value, and it runs offline with no API key and no
+database. It pins the decisions listed above — the same-day double visit, the
+`deni` / `deni_repayment` distinction, the EAT day boundary, the excluded
+anonymous sale, and the figure-preservation guard — so a regression in the
+retention arithmetic fails there instead of quietly on stage.
+
+It is not a substitute for a real test suite. `package.json` has no test runner
+and adding one is a shared-surface decision, so this is the interim. If the team
+adds `vitest` or wires up `node:test`, these cases port over directly.
+
+**It earned its keep immediately:** it caught `figuresToPreserve` requiring the
+aggregate `namedCustomerSpend`, a figure the message never prints — which meant
+the guard rejected its own fallback text and would have rejected every valid
+Claude phrasing, silently forcing the plain path 100% of the time. Typechecking
+could never have found that.
+
 ## Status
 
-Written against P0's merged scaffold, **not yet compiled**. Honest state:
+Compiles clean under `strict: true` and passes its own checks. Caveats worth
+knowing:
 
-- The deterministic logic is complete and written to be unit-testable offline.
-- **`tsc` has not been run over it.** Node isn't installed on the machine this was
-  written on, so `npm install && npx tsc --noEmit` hasn't happened. The code
-  targets `strict: true` / ES2020 as configured, but expect a first-compile round
-  of small type fixes. Do not assume it builds because it looks finished.
-- No tests. `package.json` has no test runner and adding one is shared surface
-  area, so that's a team call — but the pure functions are the cheap win the
-  moment someone adds `vitest` or `node:test`.
+- The 43 checks cover the deterministic arithmetic thoroughly and the model seam
+  with fakes. **Nothing here has run against a real Claude call or a real SQLite
+  row** — only against fixtures.
+- Not yet wired into the webhook. `src/webhook/router.ts` is P0's, and the
+  weekly-summary trigger needs a decision about *when* it fires (cron? an owner
+  asking? a demo command?) that isn't mine to make alone.
+- `npm install` needs `--ignore-scripts` on Node 24 — see below.
 
-### Heads-up for P0
+### Two heads-ups for P0 (both outside my folder, so not fixed here)
 
-`loadPrompt()` resolves prompts relative to `__dirname`, so `npm run dev`
-(ts-node, `__dirname` = `src/core`) finds the `.md` files but `npm run build &&
-npm start` will not — `tsc` doesn't copy `.md` into `dist/`. Not my call to fix,
-but it will bite whoever runs the built output on stage. A `copyfiles`/`cpx` step
-in `build`, or reading from a path anchored outside `__dirname`, both work.
+**1. `better-sqlite3@11` won't install on current Node LTS.** Node 24 has no
+prebuilt binary for it, so `npm install` drops to `node-gyp` and fails without
+Python and MSVC build tools. I got a working install with
+`npm install --ignore-scripts`, which is fine for typechecking but leaves the
+native module unbuilt — so it won't actually open a database. Bumping to
+`better-sqlite3@^12` (which ships Node 24 prebuilds) or pinning the team to Node
+22 both fix it. Worth settling before someone hits it at 3am.
+
+**2. `loadPrompt()` breaks in the built output.** It resolves prompts relative to
+`__dirname`, so `npm run dev` (ts-node, `__dirname` = `src/core`) finds the `.md`
+files, but `npm run build && npm start` will not — `tsc` doesn't copy `.md` into
+`dist/`. This will bite whoever runs built output on stage. A `copyfiles`/`cpx`
+step in `build`, or anchoring the path outside `__dirname`, both work.
 
 ### What I still need from teammates
 
