@@ -1,7 +1,7 @@
 # P0 Progress Log
 
 Last updated: 2026-07-26
-Current status (one line): GET handshake **confirmed working on localhost with the real token**; Meta verification is blocked purely on the tunnel — no ngrok agent is running, so the public URL serves an ngrok placeholder and never reaches the server
+Current status (one line): **Meta webhook verification PASSED**; credentials validated read-only; full inbound routing verified locally across 8 payload shapes — only the real phone-to-bot round trip is left, which needs a live tunnel + an allowlisted handset
 
 ## Done
 
@@ -70,7 +70,17 @@ Current status (one line): GET handshake **confirmed working on localhost with t
 
   **Env vars were fine throughout**: `META_VERIFY_TOKEN` set (`dukarafiki`), LF line endings, no stray quotes or whitespace, all four `META_*` present.
 
-  **Temporary debug instrumentation is currently in the GET handler** — logs the full query object, path, `originalUrl`, host, user-agent, and a `received`/`expected`/`match` token comparison. Purpose: silence in the log means the request never arrived (tunnel/URL problem); wrong values mean a genuine token mismatch. **Remove this block once verification passes** — it prints the verify token to stdout.
+  **Resolved** — verification passed once a tunnel was actually bound. Debug instrumentation has been removed (it printed the verify token). The handler still logs `verification handshake OK` / `REJECTED (mode=..., tokenMatch=...)`, which is enough to diagnose without leaking the token.
+
+- **ngrok: two installs, only one works.** The winget copy at `C:\Users\User\AppData\Local\Microsoft\WinGet\Packages\Ngrok.Ngrok_*\ngrok.exe` is **v3.3.1 and unauthenticated** — it rejects `--url` (too old, wants `--domain`) and fails with `ERR_NGROK_4018` on start. Use whichever install was authenticated when verification succeeded, and note the reserved domain must be bound with `--url` (newer agents) or `--domain` (older). **When no agent is bound, the reserved domain serves ngrok's "Your new ngrok Cloud Endpoint!" placeholder with HTTP 200** — which is what made Meta report a token error.
+
+- **Meta credentials verified read-only** (2026-07-26), no messages sent:
+  - Access token valid; `META_PHONE_NUMBER_ID` resolves to `+1 555-183-8457` "Test Number", `quality_rating: GREEN`, `platform_type: CLOUD_API`
+  - WABA has that single test number, `code_verification_status: NOT_VERIFIED` (normal for a test number)
+  - Approved templates include **`hello_world`** (UTILITY) plus Jasper's Market samples. Useful: `hello_world` can open a conversation outside the 24-hour window, though it can't carry custom content. A real weekly-regulars push would still need its own approved template.
+  - Worth re-running this check before the demo — an expired token looks exactly like a broken webhook: `curl -s "https://graph.facebook.com/v25.0/$META_PHONE_NUMBER_ID?fields=display_phone_number" -H "Authorization: Bearer $META_ACCESS_TOKEN"`
+
+- **Testing against live credentials: force dry-run.** With a real `META_ACCESS_TOKEN`, any inbound fixture triggers a genuine outbound send to whatever `from` number the payload carries — and the earlier fixtures used `254712345678`, a plausible real Kenyan number. Run local tests as `META_ACCESS_TOKEN="" npx ts-node src/index.ts` so replies are logged instead of sent.
 
 - ### 🔴 SWITCHED FROM TWILIO TO META WHATSAPP CLOUD API (2026-07-26)
   **Tell the team — this contradicts the locked spec.** README §6 says "Twilio WhatsApp sandbox (chosen — faster to demo, no business verification). **Do not also build the Meta Cloud API path**", and SKILL.md lists "Twilio sandbox only. No Meta Cloud API path" under non-negotiables. Decision made by P0 (Person D) at the owner's direction; recorded here rather than left implicit. Twilio transport code has been **removed**, not left dual-wired.

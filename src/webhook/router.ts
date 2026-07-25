@@ -15,24 +15,6 @@ const router = Router();
 // hub.mode / hub.verify_token / hub.challenge. Echo the challenge back as raw
 // plain text — a JSON-wrapped or quoted body fails verification.
 router.get("/webhook", (req: Request, res: Response) => {
-  // ---- TEMPORARY DEBUG — remove once verification passes ----------------
-  // If nothing appears here when you click "Verify and Save", the request never
-  // reached this handler: the problem is the tunnel or the callback URL, not
-  // this code. If it appears with wrong values, it's a token mismatch.
-  console.log("[webhook:GET] hit", {
-    path: req.path,
-    originalUrl: req.originalUrl,
-    host: req.headers.host,
-    userAgent: req.headers["user-agent"],
-    query: req.query,
-  });
-  console.log("[webhook:GET] token compare", {
-    received: JSON.stringify(req.query["hub.verify_token"]),
-    expected: JSON.stringify(config.metaVerifyToken),
-    match: req.query["hub.verify_token"] === config.metaVerifyToken,
-  });
-  // ---- end TEMPORARY DEBUG ---------------------------------------------
-
   const mode = req.query["hub.mode"];
   const token = req.query["hub.verify_token"];
   const challenge = req.query["hub.challenge"];
