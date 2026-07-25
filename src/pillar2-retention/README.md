@@ -26,17 +26,26 @@ Per README §9, P2 **reads `transactions` and `customers`. It writes nothing.**
 
 | File | Role | Network? |
 |---|---|---|
-| `types.ts` | P2's own types, plus temporary ledger mirrors (see below) | no |
+| `types.ts` | P2's own output types; re-exports ledger types from `core/types.ts` | no |
 | `customer-profile.ts` | EAT date bucketing, name normalisation, profile building | no |
 | `repeat-detection.ts` | windowing, repeat-visit detection, ranking, weekly summary | no |
 | `promo-drafts.ts` | phrasing + promo drafting, with a deterministic fallback | **yes** |
-| `../core/prompts/p2-retention.v1.ts` | versioned prompts (README §11) | no |
+| `../core/prompts/regulars-summary.md` | system prompt for the weekly message | no |
+| `../core/prompts/draft-promo.md` | system prompt for the win-back promo | no |
+
+These three files replace P0's `getCustomerProfile` / `detectRepeatVisits` /
+`draftPromo` placeholders, which threw `not implemented — P2`. Nothing on `main`
+referenced those names, so no caller breaks. The signatures changed on purpose:
+the placeholders took ids and window sizes, whereas these take ledger rows and
+return the figures the message needs, so a caller never has to re-query to turn
+an id back into something the owner would recognise.
 
 ## How to call it
 
 ```ts
-import { buildRegularsSummary, detectRepeatVisit } from './pillar2-retention/repeat-detection';
-import { draftRegularsSummary, draftWinBackPromo } from './pillar2-retention/promo-drafts';
+import { askClaude } from '../core/claude-client';
+import { buildRegularsSummary, detectRepeatVisit } from './repeat-detection';
+import { draftRegularsSummary, draftWinBackPromo } from './promo-drafts';
 
 // --- Demo beat 1: an SMS just landed, is this customer a returning face? ---
 const visit = detectRepeatVisit(allTransactions, customerId, newTxn.created_at);
@@ -46,12 +55,19 @@ const visit = detectRepeatVisit(allTransactions, customerId, newTxn.created_at);
 const summary = buildRegularsSummary(customers, allTransactions, {
   asOfDateKey: '2026-07-26',   // EAT, always passed in — never Date.now()
 });
-const weekly = await draftRegularsSummary(summary, claude);  // omit `claude` for offline text
-const promo  = await draftWinBackPromo(summary, 'sukari punguzo kidogo wiki hii', claude);
+const weekly = await draftRegularsSummary(summary, askClaude);
+const promo  = await draftWinBackPromo(summary, 'sukari punguzo kidogo wiki hii', askClaude);
 
 // weekly.source === 'claude' | 'deterministic-fallback'
 // weekly.rejectedReason is set when Claude's phrasing was rejected — see below
 ```
+
+`askClaude` is injected rather than imported inside `promo-drafts.ts` on purpose:
+importing `core/claude-client` constructs an `Anthropic` client as a side effect,
+so importing P2 would otherwise demand an API key. **Omit the last argument
+entirely** and every function returns deterministic text with no network call —
+which is how these functions are testable, and how the demo survives a dead
+tunnel.
 
 Pass the **full, unwindowed** ledger to `buildRegularsSummary`; it windows
 internally. It needs full history to tell "hasn't come this week" from
@@ -120,30 +136,35 @@ fix? P2 can surface them either way.
 
 ## Status
 
-Working, unverified. Honest state of things:
+Written against P0's merged scaffold, **not yet compiled**. Honest state:
 
 - The deterministic logic is complete and written to be unit-testable offline.
-- **Nothing has been compiled or run yet.** There is no `package.json` or
-  `tsconfig.json` in the repo — those are P0's to create (README §7), and I'm not
-  going to squat on shared surface area. Node isn't installed on my machine
-  either. Expect a first-compile round of small type fixes.
-- No tests yet. The pure functions are the easy win once a test runner exists.
+- **`tsc` has not been run over it.** Node isn't installed on the machine this was
+  written on, so `npm install && npx tsc --noEmit` hasn't happened. The code
+  targets `strict: true` / ES2020 as configured, but expect a first-compile round
+  of small type fixes. Do not assume it builds because it looks finished.
+- No tests. `package.json` has no test runner and adding one is shared surface
+  area, so that's a team call — but the pure functions are the cheap win the
+  moment someone adds `vitest` or `node:test`.
 
-### What I need from teammates
+### Heads-up for P0
 
-- **P0** — `package.json` + `tsconfig.json`, and `src/core/claude-client.ts`. If
-  it satisfies the `LanguageModel` interface in `promo-drafts.ts`, this pillar
-  wires up with no changes.
-- **P0** — seed data (`demo/seed-data.ts`) with named payers spread across
-  several weeks. I specifically need: one customer who visits twice in one day
-  (proves visits aren't double-counted), one who lapses mid-period (proves the
-  promo trigger fires), and one name in two casings (proves duplicate detection
-  fires).
-- **P1** — `src/core/types.ts` with `Customer` and `Transaction`. Until then,
-  `types.ts` mirrors README §8 under a clearly marked `LEDGER MIRRORS` heading.
-  **Those mirrors are a stand-in, not a fork** — delete them and switch to the
-  import the moment the real types land. If they ever disagree with
-  `schema.sql`, `schema.sql` is right.
-- **P1** — confirmation that bare `created_at` values are UTC. If P1 writes local
-  EAT strings instead, `toEatDateKey` would double-shift and every visit count
-  would be subtly wrong. This is the assumption most likely to bite us.
+`loadPrompt()` resolves prompts relative to `__dirname`, so `npm run dev`
+(ts-node, `__dirname` = `src/core`) finds the `.md` files but `npm run build &&
+npm start` will not — `tsc` doesn't copy `.md` into `dist/`. Not my call to fix,
+but it will bite whoever runs the built output on stage. A `copyfiles`/`cpx` step
+in `build`, or reading from a path anchored outside `__dirname`, both work.
+
+### What I still need from teammates
+
+- **P1** — confirmation that bare `created_at` values are stored **UTC**. If P1
+  writes local EAT strings instead, `toEatDateKey` double-shifts and every visit
+  count is subtly wrong. This is the assumption most likely to bite us, and it
+  fails quietly rather than loudly.
+- **P0/P1** — seed data (`demo/seed-data.ts`) with named payers across several
+  weeks. Three cases specifically exercise this pillar: one customer who visits
+  **twice in one day** (proves visits aren't double-counted), one who **lapses
+  mid-period** (proves the promo trigger fires), and one name in **two casings**
+  (proves duplicate detection fires).
+- **P1** — a decision on who resolves duplicate candidates, per
+  [Duplicate names](#duplicate-names). P2 can surface them; only P1 can merge.

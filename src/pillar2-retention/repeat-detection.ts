@@ -5,6 +5,11 @@
  * Every export is pure and offline. This module produces **all the numbers** the
  * weekly WhatsApp message contains — `promo-drafts.ts` only phrases them
  * (README §5).
+ *
+ * Replaces P0's `detectRepeatVisits` placeholder. That signature took a window
+ * in days and returned customer ids; the functions here take ledger rows and
+ * return the figures the message needs, so the caller never has to re-query to
+ * turn an id back into something the owner would recognise.
  */
 
 import {
@@ -102,9 +107,9 @@ export function filterToWindow(
  * Compares EAT calendar days, so a second purchase the same afternoon correctly
  * reads as *not* a new visit.
  *
- * @param history All ledger rows for this customer, the new one included.
- *                Rows for other customers are ignored, so passing the whole
- *                ledger is safe if wasteful.
+ * @param history All ledger rows for this customer, the new one included. Rows
+ *                for other customers are ignored, so passing the whole ledger is
+ *                safe if wasteful.
  * @param customerId The customer who just transacted.
  * @param asOfTimestamp The new transaction's `created_at`.
  */
@@ -211,7 +216,11 @@ export function buildRegularsSummary(
   const regulars = rankRegulars(inWindow, limit).map((ranked) => {
     const lifetime = lifetimeByCustomer.get(ranked.customerId);
     return lifetime
-      ? { ...ranked, lastVisit: lifetime.lastVisit, daysSinceLastVisit: lifetime.daysSinceLastVisit }
+      ? {
+          ...ranked,
+          lastVisit: lifetime.lastVisit,
+          daysSinceLastVisit: lifetime.daysSinceLastVisit,
+        }
       : ranked;
   });
 

@@ -5,14 +5,18 @@
  * It writes nothing, holds no state, and performs no network calls — every
  * export is a pure function of its arguments. That keeps it unit-testable with
  * no API key and no database, and it keeps the arithmetic auditable (README §5).
+ *
+ * Replaces P0's `getCustomerProfile` placeholder. Rows are passed in rather than
+ * fetched here, so the caller — the webhook, or a test — decides what slice of
+ * the ledger is in scope.
  */
 
 import type {
+  Channel,
   Customer,
   CustomerProfile,
   DuplicateCandidate,
   Transaction,
-  TransactionChannel,
   TransactionType,
 } from './types';
 
@@ -26,8 +30,8 @@ import type {
  *
  * This matters: a 21:30 EAT sale is 18:30 UTC the same day, but a 01:00 EAT sale
  * is 22:00 UTC the *previous* day. Bucketing visits by UTC day would file some
- * evening and early-morning sales under the wrong date and quietly inflate
- * visit counts. All day bucketing in P2 goes through `toEatDateKey`.
+ * evening and early-morning sales under the wrong date and quietly inflate visit
+ * counts. All day bucketing in P2 goes through `toEatDateKey`.
  */
 export const EAT_UTC_OFFSET_HOURS = 3;
 
@@ -54,8 +58,8 @@ const SPEND_TYPES: readonly TransactionType[] = ['sale', 'deni'];
  * Collapse a ledger timestamp to its EAT calendar date, `YYYY-MM-DD`.
  *
  * Accepts what SQLite hands back for a `DATETIME` column: `"2026-07-20 14:32:11"`
- * (space-separated, no zone — treated as UTC, which is what
- * `CURRENT_TIMESTAMP` stores) as well as ISO-8601 with an explicit offset.
+ * (space-separated, no zone — treated as UTC, which is what `CURRENT_TIMESTAMP`
+ * stores) as well as ISO-8601 with an explicit offset.
  *
  * @throws if the timestamp is unparseable — a silently-dropped transaction is
  *         worse than a loud failure, because it would understate a real
@@ -72,9 +76,7 @@ function parseLedgerTimestamp(timestamp: string): Date {
 
   // Already carries a zone or offset — trust it.
   const hasZone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(raw);
-  const normalized = hasZone
-    ? raw.replace(' ', 'T')
-    : `${raw.replace(' ', 'T')}Z`; // bare SQLite DATETIME is UTC
+  const normalized = hasZone ? raw.replace(' ', 'T') : `${raw.replace(' ', 'T')}Z`;
 
   const date = new Date(normalized);
   if (Number.isNaN(date.getTime())) {
@@ -100,13 +102,13 @@ export function daysBetweenDateKeys(fromKey: string, toKey: string): number {
 /**
  * Normalise an M-Pesa payer name for comparison.
  *
- * Buy Goods SMS names arrive shouty and inconsistently spaced —
- * `"MARY  WANJIKU"`, `"Mary Wanjiku"`, `"mary wanjiku."` — and each spelling
- * would otherwise become a separate "customer", fragmenting the retention list
- * that is the whole point of this pillar.
+ * Buy Goods SMS names arrive shouty and inconsistently spaced — `"MARY  WANJIKU"`,
+ * `"Mary Wanjiku"`, `"mary wanjiku."` — and each spelling would otherwise become
+ * a separate "customer", fragmenting the retention list that is the whole point
+ * of this pillar.
  *
  * Comparison only. Never store the normalised form as the customer's name; the
- * owner should see the name they recognise.
+ * owner should see the name she recognises.
  */
 export function normalizeName(name: string | null | undefined): string {
   if (!name) return '';
@@ -136,9 +138,8 @@ export function displayNameFor(customer: Customer): string {
  * `customers`, which is P1's alone (README §9).
  *
  * Pairs where a disambiguator already tells them apart are still returned, but
- * flagged `disambiguated: true`, because "Mary - blue uniform" and
- * "Mary - kiosk next door" are probably two real people the owner already
- * separated on purpose.
+ * flagged `disambiguated: true`, because "Mary - blue uniform" and "Mary - shop
+ * next door" are probably two real people the owner separated on purpose.
  */
 export function findDuplicateCandidates(customers: readonly Customer[]): DuplicateCandidate[] {
   const buckets = new Map<string, Customer[]>();
@@ -154,7 +155,6 @@ export function findDuplicateCandidates(customers: readonly Customer[]): Duplica
   const candidates: DuplicateCandidate[] = [];
   for (const [normalizedName, group] of buckets) {
     if (group.length < 2) continue;
-    // Every unordered pair in the group.
     for (let i = 0; i < group.length; i += 1) {
       for (let j = i + 1; j < group.length; j += 1) {
         const a = group[i];
@@ -181,7 +181,7 @@ export function findDuplicateCandidates(customers: readonly Customer[]): Duplica
 export interface BuildProfilesOptions {
   /**
    * Date all "days since" figures are measured from, `YYYY-MM-DD` in EAT.
-   * Required — passed in rather than read from the clock so that results are
+   * Required — passed in rather than read from the clock so results are
    * reproducible and testable, and so the demo can run against seeded history.
    */
   asOfDateKey: string;
@@ -191,8 +191,8 @@ export interface BuildProfilesOptions {
    * Defaults to `true`: retention is advisory, and an owner who hasn't yet
    * confirmed today's close still wants to see who came in. The strict
    * unconfirmed-entry rule (README §3) governs the **statement**, which is P3's
-   * surface, not this one. Either way the profile carries
-   * `includesUnconfirmed` so the distinction is never hidden.
+   * surface, not this one. Either way the profile carries `includesUnconfirmed`
+   * so the distinction is never hidden.
    */
   includeUnconfirmed?: boolean;
 }
@@ -223,7 +223,7 @@ export function buildCustomerProfiles(
   interface Accumulator {
     visitDays: Set<string>;
     totalSpend: number;
-    channels: Set<TransactionChannel>;
+    channels: Set<Channel>;
     includesUnconfirmed: boolean;
   }
   const accumulators = new Map<number, Accumulator>();
@@ -237,9 +237,9 @@ export function buildCustomerProfiles(
     let acc = accumulators.get(txn.customer_id);
     if (!acc) {
       acc = {
-        visitDays: new Set(),
+        visitDays: new Set<string>(),
         totalSpend: 0,
-        channels: new Set(),
+        channels: new Set<Channel>(),
         includesUnconfirmed: false,
       };
       accumulators.set(txn.customer_id, acc);

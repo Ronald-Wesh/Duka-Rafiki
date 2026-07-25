@@ -1,61 +1,18 @@
 /**
  * P2 — Retention: types.
  *
- * Two groups live here:
+ * Ledger types (`Customer`, `Transaction`, `Channel`, `TransactionType`) are
+ * owned by P1/P0 in `src/core/types.ts` and are merely re-exported here so P2
+ * modules have a single import site. **P2 does not define ledger shapes.** If a
+ * field is missing, ask P1 to add it to `core/types.ts` rather than widening
+ * anything in this folder (README §9).
  *
- *  1. LEDGER MIRRORS (`Customer`, `Transaction`) — a temporary transcription of
- *     README §8 / `src/db/schema.sql`. P0 has not landed `src/core/types.ts` yet
- *     and P2 must not block on it. **The moment that file exists, delete the
- *     mirrors below and import instead:**
- *
- *         import type { Customer, Transaction } from '../core/types';
- *
- *     P1 owns the ledger shape. These mirrors are a stand-in, never a fork — if
- *     they disagree with `schema.sql`, `schema.sql` is right.
- *
- *  2. P2-OWNED TYPES (`CustomerProfile`, `RegularsSummary`, …) — the retention
- *     pillar's own outputs. P2 owns these outright.
+ * Everything below the re-export is P2's own output, which P2 owns outright.
  */
 
-// ---------------------------------------------------------------------------
-// 1. LEDGER MIRRORS — delete once src/core/types.ts exists
-// ---------------------------------------------------------------------------
+import type { Channel, Customer } from '../core/types';
 
-export type TransactionType = 'sale' | 'deni' | 'deni_repayment' | 'restock';
-
-export type TransactionChannel = 'mpesa_buygoods' | 'cash';
-
-/** `customers` table (README §8). */
-export interface Customer {
-  id: number;
-  /** Lifted from the M-Pesa SMS payer name, or manually tagged. */
-  name: string | null;
-  /** Usually absent — Buy Goods SMS gives a name, not a number. */
-  phone: string | null;
-  /** Free text separating same-named customers, e.g. "blue uniform". */
-  disambiguator: string | null;
-  first_seen: string | null;
-  last_seen: string | null;
-}
-
-/** `transactions` table (README §8). */
-export interface Transaction {
-  id: number;
-  /** Null for anonymous cash — those transactions are invisible to retention. */
-  customer_id: number | null;
-  type: TransactionType;
-  amount: number;
-  channel: TransactionChannel;
-  /** 0 = self-reported/unconfirmed, 1 = owner-confirmed. */
-  confirmed: 0 | 1;
-  raw_input: string | null;
-  /** SQLite DATETIME. Assumed UTC — see `EAT_UTC_OFFSET_HOURS`. */
-  created_at: string;
-}
-
-// ---------------------------------------------------------------------------
-// 2. P2-OWNED TYPES
-// ---------------------------------------------------------------------------
+export type { Channel, Customer, Transaction, TransactionType } from '../core/types';
 
 /**
  * What P2 knows about one customer, derived purely from ledger rows.
@@ -89,14 +46,12 @@ export interface CustomerProfile {
   /** `visitCount >= REPEAT_VISIT_THRESHOLD`. */
   isRepeat: boolean;
   /** Channels seen, sorted, deduped. Useful for "reachable via M-Pesa?". */
-  channels: TransactionChannel[];
+  channels: Channel[];
   /** True if any contributing row had `confirmed = 0`. Surfaced, never hidden. */
   includesUnconfirmed: boolean;
 }
 
-/**
- * One customer's line in the weekly summary, with the ranking already applied.
- */
+/** One customer's line in the weekly summary, with the ranking applied. */
 export interface RankedRegular extends CustomerProfile {
   /** 1-based position in the summary. */
   rank: number;
@@ -126,8 +81,9 @@ export interface RegularsSummary {
   /** True if any contributing row was unconfirmed. */
   includesUnconfirmed: boolean;
   /**
-   * Regulars whose `daysSinceLastVisit` has crossed `LAPSED_AFTER_DAYS` —
-   * the ones worth a promo. Subset of `regulars`.
+   * Regulars whose `daysSinceLastVisit` has crossed `LAPSED_AFTER_DAYS` — the
+   * ones worth a promo. Ranked, and **not** necessarily a subset of `regulars`:
+   * someone who has gone quiet is by definition absent from this week's list.
    */
   lapsing: RankedRegular[];
 }
