@@ -1,14 +1,15 @@
 # P0 Progress Log
 
 Last updated: 2026-07-26
-Current status (one line): router + 4 weeks of deterministic seed data both done and verified; Twilio/ngrok is now the only untested surface
+Current status (one line): all four prompt files written and P1 can wire real parsing; Twilio/ngrok + a live prompt run against the real API are the two untested surfaces
 
 ## Done
 
 - ✅ **1. Repo skeleton + db/schema.sql** — structure matches team spec section 7. Schema copied verbatim, no improvised columns.
 - ✅ **2. db.ts** — better-sqlite3 connection + `initDb()` executing schema.sql.
 - ✅ **3. types.ts** — `Transaction`, `Customer`, `ReconciliationResult`, `Statement`, plus `ParsedMpesaSms`, `TransactionType`, `Channel`.
-- ✅ **4. claude-client.ts + /prompts structure** — `loadPrompt()` reads versioned files from `src/core/prompts/`; `askClaude()` / `askClaudeJson()` return text/JSON only, never a computed figure. **Prompt files themselves not written yet** — only the loader and the directory README.
+- ✅ **4. claude-client.ts + /prompts structure** — `loadPrompt()` reads versioned files from `src/core/prompts/`; `askClaude()` / `askClaudeJson()` return text/JSON only, never a computed figure. Client hardened since: lazy init with a clear "key not set" error, `temperature: 0` default for extraction, `extractJson()` strips ```json fences, and a JSON parse failure reports what actually came back.
+- ✅ **4b. All four prompt files written** — `parse-mpesa-sms.md`, `parse-transaction.md`, `draft-promo.md`, `phrase-summary.md`. P1 can now wire real parsing. `npm run check:prompts` (10 offline checks) + `npm run check:prompts:live` (needs an API key). `npm run check` runs all three suites — 40 checks, currently green.
 - ✅ **Merged to main** — PR #1 (`platform-infra` → `main`), commit 8671176.
 - ✅ **Install + boot verified** — `npm install`, `npm run seed` (rows confirmed in DB), and `npm run dev` → `/health` returns `{"ok":true}`. First time the scaffold has actually run; before this it was typecheck-only.
 - ✅ **6. router.ts intent dispatch + fail-soft** — `intent.ts` classifies 8 intents deterministically (no model call — a misroute on stage is worse than a rigid match). Router dispatches to pillar handlers via `pillarCall()`, which degrades a not-yet-implemented pillar into an honest "haijahifadhiwa bado" notice instead of silence. Verified end to end against a live server: help / mpesa_sms / sale / report / unknown / media all route and reply correctly.
@@ -22,14 +23,16 @@ Current status (one line): router + 4 weeks of deterministic seed data both done
 
 ## Next up
 
-1. **5 + 7. Twilio sandbox + ngrok** — the last external dependency and the only surface never tested. Needs credentials + the demo phone, so it can't be done unattended.
-2. **4 (finish). Write the actual prompt files** — `parse-mpesa-sms.md`, `parse-transaction.md`, `draft-promo.md`.
+1. **Run `npm run check:prompts:live`** as soon as an `ANTHROPIC_API_KEY` is in `.env`. **The prompts have never been run against the real model** — they're written and self-consistent, but unverified. Do this before relying on them.
+2. **5 + 7. Twilio sandbox + ngrok** — the last external dependency and the only surface never tested. Needs credentials + the demo phone, so it can't be done unattended.
 3. **9. demo-script.md** — the exact 3-minute conversation. Now writable, since the seed data it has to reference exists.
 
 ## Shared contract changes (flag to team)
 
 - Initial `types.ts` and `schema.sql` landed in PR #1. Schema is **unchanged** from the team spec — P1 owns any changes from here.
-- Added `ParsedMpesaSms` to `types.ts` (`{amount, payer_name, till, timestamp}`) for P1's SMS parser. Not yet confirmed with P1.
+- Added `ParsedMpesaSms` to `types.ts` (`{amount, payer_name, till, timestamp}`) for P1's SMS parser. Not yet confirmed with P1. `till` is now `string | null` — Pochi messages frequently have no till.
+- **New additive types for P1 to review**: `ParsedTransaction` (what `parse-transaction.md` returns) and `ParseError` + `isParseError()`. `ParsedTransaction` deliberately carries `customer_name` / `disambiguator` rather than a `customer_id` — the model can't know IDs, so the caller resolves the name against `customers`. It also carries `needs_review`, which maps to `transactions.confirmed = 0`. Additive only, nothing existing changed, and P1 should reshape it if it doesn't fit.
+- **`askClaude` signature changed** from `(name, input, maxTokens)` to `(name, input, opts)`. Safe right now because no pillar calls it yet — but don't be surprised by it.
 - Pillar stub files exist with contract signatures that `throw new Error("not implemented")` so cross-pillar imports typecheck before implementations land. Pillar owners replace the bodies on their own branches.
 
 ## Needs from other pillars
@@ -55,6 +58,9 @@ Current status (one line): router + 4 weeks of deterministic seed data both done
 - **M-Pesa detection needs an amount PLUS a marker** (`Confirmed`, `M-PESA`, `Umepokea`, txn code…). Amount alone isn't enough or the trader's own "nimepata 500" gets logged as a forwarded SMS — which corrupts the ledger silently rather than erroring. This is what `npm run check:intents` protects.
 - **Seed data is deterministic on purpose** (fixed-seed mulberry32, `SEED = 20260726`). `Math.random()` would make the demo different every run and stop pillars from writing tests against known values. Changing `SEED` or `DAYS` changes every number downstream.
 - **Three seed realism bugs that assertions did NOT catch** — found only by reading rows, worth remembering when extending it: (a) repayments initially exceeded credit given, so outstanding receivables went *negative*, which is meaningless on a lender-facing statement; (b) restock was too small, implying a 62% gross margin when a duka runs 10–20%; (c) the quantity multiplier contradicted catalogue phrasing, producing `mafuta 1L 960`. All three were plausible-looking numbers, not errors — exactly what a judge would notice. `npm run check:seed` now guards all three.
+- **Prompts refuse rather than compute.** `soda mbili 50` returns an error instead of guessing 100, and `phrase-summary` won't turn "23 of 28 days" into "82%". Both would be *plausible* numbers with no ledger row behind them, which is exactly what breaks the "every figure is auditable" claim. If a pillar owner finds a prompt "unhelpfully strict", that strictness is the point — do the arithmetic in code.
+- **The M-Pesa date trap:** Kenyan SMS dates are `D/M/YY`, so `3/7/26` is 3 July, not 7 March. Called out explicitly in the prompt and asserted in the live check. A silent month/day swap would scatter transactions across the wrong days and quietly wreck reconciliation.
+- **`npm run check:prompts` scans the whole codebase for scoring vocabulary** (score / band / rating / creditworthy / risk level) outside comments, because README §13 makes that a product requirement. Verified it actually catches a violation rather than passing vacuously. Files that name the words in order to forbid them are exempt by filename — add to `EXEMPT` if you write another.
 - **Considered and skipped: a `message_log` table** for auditing raw inbound messages. It's a schema change and P1 owns the schema, so it needs a team heads-up first rather than being slipped in. Currently everything is `console.log` only — fine for the demo, but there's no durable record of an unparsed message.
 
 ---
@@ -64,7 +70,7 @@ Current status (one line): router + 4 weeks of deterministic seed data both done
 - [x]   1. Repo skeleton + schema.sql
 - [x]   2. db.ts
 - [x]   3. types.ts (Transaction, Customer, ReconciliationResult, Statement)
-- [~]   4. claude-client.ts + /prompts structure — loader done, prompt files not written
+- [x]   4. claude-client.ts + /prompts structure — loader hardened, all 4 prompt files written (unverified against the live API)
 - [ ]   5. Twilio WhatsApp sandbox joined + tested
 - [x]   6. webhook/router.ts + whatsapp-client.ts — intent dispatch + fail-soft done, verified end to end
 - [ ]   7. ngrok tunnel working + documented in .env.example
