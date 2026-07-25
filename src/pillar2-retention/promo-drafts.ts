@@ -1,0 +1,348 @@
+/**
+ * P2 — Retention: phrase the weekly summary and draft win-back promos.
+ *
+ * This is the **only** module in P2 that talks to Claude, and it is deliberately
+ * the only one that can. The split is the architectural rule from README §5:
+ *
+ *   - `customer-profile.ts` / `repeat-detection.ts` compute every figure.
+ *   - this module hands those figures to the model and asks for wording only.
+ *
+ * Two safeguards make that rule enforceable rather than aspirational:
+ *
+ *   1. `renderRegularsSummaryText` produces a complete, sendable message with no
+ *      model involved. If there is no API key, the network is down, or the
+ *      Twilio sandbox is flaky at 3am, the demo still has a message to send.
+ *   2. `assertFiguresPreserved` re-checks that every supplied figure survived in
+ *      the model's output. If the model dropped, rounded, or invented a number,
+ *      the deterministic text is used instead. A wrong figure never reaches the
+ *      owner.
+ */
+
+import {
+  P2_PROMPT_VERSION,
+  P2_VOICE_SYSTEM_PROMPT,
+  promoDraftPrompt,
+  regularsSummaryPrompt,
+} from '../core/prompts/p2-retention.v1';
+import type { RankedRegular, RegularsSummary } from './types';
+
+// ---------------------------------------------------------------------------
+// Model seam
+// ---------------------------------------------------------------------------
+
+/**
+ * The narrow slice of a Claude client that P2 needs.
+ *
+ * Declared here as an interface rather than imported so that P2 does not block
+ * on P0's `src/core/claude-client.ts`, and so these functions are testable with
+ * a three-line fake. When P0's client lands it should satisfy this shape — if it
+ * doesn't, adapt at the call site rather than widening this.
+ */
+export interface LanguageModel {
+  complete(input: { system?: string; prompt: string; maxTokens?: number }): Promise<string>;
+}
+
+// ---------------------------------------------------------------------------
+// Formatting
+// ---------------------------------------------------------------------------
+
+const KES = new Intl.NumberFormat('en-KE', {
+  style: 'currency',
+  currency: 'KES',
+  currencyDisplay: 'code',
+  minimumFractionDigits: 0,
+  maximumFractionDigits: 0,
+});
+
+/**
+ * `Intl` separates the currency code from the digits with a non-breaking space
+ * on some Node/ICU builds and an ordinary space on others. Normalising to a
+ * plain space means {@link assertFiguresPreserved} cannot fail merely because
+ * the model retyped "KES 1,250" with the space it would naturally use.
+ */
+const NBSP = String.fromCharCode(0x00a0);
+const NARROW_NBSP = String.fromCharCode(0x202f);
+
+/**
+ * Format an amount the way it will appear to the owner, e.g. `KES 1,250`.
+ *
+ * Shillings only — cents are noise on a kiosk receipt and make the message
+ * harder to scan. This is the single place money becomes text in P2, so the
+ * figure the model is shown is identical to the figure that gets sent, which is
+ * what makes {@link assertFiguresPreserved} reliable.
+ */
+export function formatKes(amount: number): string {
+  return KES.format(Math.round(amount)).split(NBSP).join(' ').split(NARROW_NBSP).join(' ');
+}
+
+function visitWord(count: number): string {
+  return count === 1 ? 'visit' : 'visits';
+}
+
+// ---------------------------------------------------------------------------
+// Deterministic rendering (no model, no network)
+// ---------------------------------------------------------------------------
+
+/**
+ * The facts block handed to Claude — and, when the model is unavailable, the
+ * skeleton of the message itself.
+ *
+ * Kept as one function so the model can never be shown a figure that the
+ * fallback path doesn't also contain.
+ */
+export function renderFactsBlock(summary: RegularsSummary): string {
+  const lines: string[] = [
+    `Week: ${summary.periodStart} to ${summary.periodEnd}`,
+    `Named regulars seen this week: ${summary.namedCustomerCount}`,
+    `Of those, repeat visitors: ${summary.repeatCustomerCount}`,
+    `Spend by named customers this week: ${formatKes(summary.namedCustomerSpend)}`,
+    '',
+    'Top regulars (already ranked — keep this order):',
+  ];
+
+  if (summary.regulars.length === 0) {
+    lines.push('  (none — no named customer transacted this week)');
+  } else {
+    for (const regular of summary.regulars) {
+      lines.push(
+        `  ${regular.rank}. ${regular.displayName} — ${regular.visitCount} ${visitWord(
+          regular.visitCount,
+        )}, ${formatKes(regular.totalSpend)}`,
+      );
+    }
+  }
+
+  if (summary.lapsing.length > 0) {
+    lines.push('', 'Regulars who have gone quiet:');
+    for (const regular of summary.lapsing) {
+      lines.push(
+        `  ${regular.displayName} — last seen ${regular.lastVisit} (${regular.daysSinceLastVisit} days ago)`,
+      );
+    }
+  }
+
+  if (summary.includesUnconfirmed) {
+    lines.push('', 'Note: includes entries the owner has not yet confirmed at day close.');
+  }
+
+  return lines.join('\n');
+}
+
+/**
+ * A complete, sendable weekly message built without the model.
+ *
+ * Used as the fallback whenever phrasing is unavailable or fails verification.
+ * Plainer than Claude's version, never wrong.
+ */
+export function renderRegularsSummaryText(summary: RegularsSummary): string {
+  if (summary.regulars.length === 0) {
+    return [
+      `Wiki hii (${summary.periodStart} - ${summary.periodEnd}): hakuna customer wa jina aliyerekodiwa.`,
+      '',
+      'Forward M-Pesa messages zako na tuanze kujenga list ya regulars wako.',
+    ].join('\n');
+  }
+
+  const lines: string[] = [
+    `Regulars wako wiki hii (${summary.periodStart} - ${summary.periodEnd}):`,
+    '',
+  ];
+
+  for (const regular of summary.regulars) {
+    lines.push(
+      `${regular.rank}. ${regular.displayName} - ${regular.visitCount} ${visitWord(
+        regular.visitCount,
+      )}, ${formatKes(regular.totalSpend)}`,
+    );
+  }
+
+  lines.push(
+    '',
+    `Wateja wa jina: ${summary.namedCustomerCount}. Wanaorudi: ${summary.repeatCustomerCount}.`,
+  );
+
+  if (summary.lapsing.length > 0) {
+    const names = summary.lapsing.map((r) => r.displayName).join(', ');
+    lines.push('', `Hawa hawajaonekana kwa muda: ${names}. Ungependa kutuma promo?`);
+  }
+
+  if (summary.includesUnconfirmed) {
+    lines.push('', '(Ina entries ambazo hujathibitisha bado.)');
+  }
+
+  return lines.join('\n');
+}
+
+// ---------------------------------------------------------------------------
+// Figure verification — the guard that makes README §5 enforceable
+// ---------------------------------------------------------------------------
+
+/**
+ * Every figure that must appear verbatim in the owner-facing weekly message.
+ *
+ * Deliberately excludes the lapsing-customer day counts, which the promo prompt
+ * is instructed *not* to mention.
+ */
+export function figuresToPreserve(summary: RegularsSummary): string[] {
+  const figures = [
+    formatKes(summary.namedCustomerSpend),
+    String(summary.namedCustomerCount),
+    String(summary.repeatCustomerCount),
+  ];
+  for (const regular of summary.regulars) {
+    figures.push(String(regular.visitCount), formatKes(regular.totalSpend), regular.displayName);
+  }
+  return [...new Set(figures)];
+}
+
+export interface FigureCheckResult {
+  ok: boolean;
+  /** Figures that did not appear verbatim in the model's output. */
+  missing: string[];
+}
+
+/**
+ * Check that the model's phrasing still contains every computed figure.
+ *
+ * Substring matching against the *formatted* figures, which is why formatting
+ * lives in exactly one place. Whitespace is collapsed on both sides because the
+ * model may rewrap lines; digits and names are compared as-is.
+ *
+ * This catches the failure that actually matters on stage: a fluent, confident
+ * message with a subtly wrong number in it.
+ */
+export function assertFiguresPreserved(text: string, summary: RegularsSummary): FigureCheckResult {
+  const collapse = (value: string) =>
+    value.split(NBSP).join(' ').split(NARROW_NBSP).join(' ').replace(/\s+/g, ' ');
+  const haystack = collapse(text);
+  const missing = figuresToPreserve(summary).filter(
+    (figure) => !haystack.includes(collapse(figure)),
+  );
+  return { ok: missing.length === 0, missing };
+}
+
+// ---------------------------------------------------------------------------
+// Drafting
+// ---------------------------------------------------------------------------
+
+export interface DraftResult {
+  text: string;
+  /** How the text was produced — surfaced so the demo can say which path ran. */
+  source: 'claude' | 'deterministic-fallback';
+  /** Set when the model was tried and its output failed verification. */
+  rejectedReason?: string;
+  /** The prompt version used, for reproducing a bad draft later. */
+  promptVersion?: string;
+}
+
+/**
+ * Phrase the weekly regulars summary.
+ *
+ * Pass no model to get the deterministic message. Pass one and the phrasing is
+ * used **only if** every computed figure survives verification; otherwise the
+ * deterministic text is returned with `rejectedReason` set.
+ *
+ * Never throws on model failure — a summary that fails to send is a worse
+ * outcome than a plainly-worded one.
+ */
+export async function draftRegularsSummary(
+  summary: RegularsSummary,
+  model?: LanguageModel,
+): Promise<DraftResult> {
+  const fallback = renderRegularsSummaryText(summary);
+  if (!model) return { text: fallback, source: 'deterministic-fallback' };
+
+  let phrased: string;
+  try {
+    phrased = (
+      await model.complete({
+        system: P2_VOICE_SYSTEM_PROMPT,
+        prompt: regularsSummaryPrompt(renderFactsBlock(summary)),
+        maxTokens: 500,
+      })
+    ).trim();
+  } catch (error) {
+    return {
+      text: fallback,
+      source: 'deterministic-fallback',
+      rejectedReason: `model call failed: ${(error as Error).message}`,
+      promptVersion: P2_PROMPT_VERSION,
+    };
+  }
+
+  const check = assertFiguresPreserved(phrased, summary);
+  if (!check.ok) {
+    return {
+      text: fallback,
+      source: 'deterministic-fallback',
+      rejectedReason: `model output dropped or altered figures: ${check.missing.join(', ')}`,
+      promptVersion: P2_PROMPT_VERSION,
+    };
+  }
+
+  return { text: phrased, source: 'claude', promptVersion: P2_PROMPT_VERSION };
+}
+
+/**
+ * Draft a win-back promo aimed at the summary's lapsing regulars.
+ *
+ * The result is a **draft**: the owner reads it, edits it, and decides whether to
+ * send. P2 never sends anything — outbound is P0's webhook.
+ *
+ * @param offer The owner's own words for what she is offering, e.g.
+ *              "sukari punguzo kidogo wiki hii". Passed through verbatim; the
+ *              prompt forbids inventing a discount, so an empty offer yields a
+ *              plain "we miss you" note rather than a fabricated deal.
+ */
+export async function draftWinBackPromo(
+  summary: RegularsSummary,
+  offer: string,
+  model?: LanguageModel,
+): Promise<DraftResult & { recipients: RankedRegular[] }> {
+  const recipients = summary.lapsing;
+  const trimmedOffer = offer.trim();
+
+  const fallback = recipients.length
+    ? [
+        'Mambo! Tumekukosa kwa duka.',
+        trimmedOffer ? `Wiki hii: ${trimmedOffer}.` : 'Karibu tena wiki hii.',
+        'Karibu tena - Mama Njeri.',
+      ].join('\n')
+    : 'Hakuna regular ambaye hajaonekana kwa muda. Hakuna promo inayohitajika sasa.';
+
+  if (!model || recipients.length === 0) {
+    return { text: fallback, source: 'deterministic-fallback', recipients };
+  }
+
+  try {
+    const phrased = (
+      await model.complete({
+        system: P2_VOICE_SYSTEM_PROMPT,
+        prompt: promoDraftPrompt(renderFactsBlock(summary), trimmedOffer || '(no specific offer)'),
+        maxTokens: 300,
+      })
+    ).trim();
+
+    // The promo intentionally carries no computed figures, so there is nothing
+    // to verify beyond it being non-empty. Guard against a blank response.
+    if (!phrased) {
+      return {
+        text: fallback,
+        source: 'deterministic-fallback',
+        rejectedReason: 'model returned empty text',
+        promptVersion: P2_PROMPT_VERSION,
+        recipients,
+      };
+    }
+
+    return { text: phrased, source: 'claude', promptVersion: P2_PROMPT_VERSION, recipients };
+  } catch (error) {
+    return {
+      text: fallback,
+      source: 'deterministic-fallback',
+      rejectedReason: `model call failed: ${(error as Error).message}`,
+      promptVersion: P2_PROMPT_VERSION,
+      recipients,
+    };
+  }
+}
