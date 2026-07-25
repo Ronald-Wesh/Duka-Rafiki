@@ -76,6 +76,10 @@ const customerIds = CUSTOMERS.map(
 // makes the "logged N of M days" note mean something.
 const SKIPPED = new Set([nairobiDate(19), nairobiDate(12), nairobiDate(5)]);
 
+// Days the owner's count is well off. Fixed, not probabilistic, so the
+// out-of-tolerance property holds on every run.
+const OFF_BY_A_LOT = new Set([nairobiDate(22), nairobiDate(15), nairobiDate(8)]);
+
 let seededDays = 0;
 
 db.transaction(() => {
@@ -134,10 +138,13 @@ db.transaction(() => {
       );
     }
 
-    // Owner closes most days. Miss a few, and let 3 land outside tolerance so
-    // reconciliation accuracy is not a suspicious 100%.
+    // Owner closes most days. Three fixed days land well outside tolerance so
+    // reconciliation accuracy is never a suspicious 100% — a perfect record
+    // reads as fabricated, and the variance conversation is part of the pitch.
     if (rng() < 0.88) {
-      const drift = rng() < 0.12 ? randInt(60, 400) * (rng() < 0.5 ? -1 : 1) : randInt(-40, 40);
+      const drift = OFF_BY_A_LOT.has(date)
+        ? randInt(60, 400) * (rng() < 0.5 ? -1 : 1)
+        : randInt(-40, 40);
       const reported = expected + drift;
       insertRecon.run(date, expected, reported, reported - expected, "seed");
     }
