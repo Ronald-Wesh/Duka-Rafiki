@@ -1,3 +1,6 @@
+# Union of P0's original rules (platform-infra) and the additions below.
+# Nothing P0 ignored has been un-ignored.
+
 # --- Secrets: never commit these -------------------------------------------
 .env
 .env.*
@@ -17,6 +20,8 @@ build/
 *.tsbuildinfo
 
 # --- SQLite demo database (regenerate with the seed script, never commit) ---
+# duka.db is DB_PATH in .env.example. The -journal/-wal/-shm siblings are what
+# better-sqlite3 leaves beside it; ignoring only *.db lets those get committed.
 *.db
 *.db-journal
 *.db-wal
@@ -47,4 +52,7 @@ desktop.ini
 !.vscode/extensions.json
 
 # --- Claude Code local state ------------------------------------------------
-.claude/settings.local.json
+# P0's choice, kept as-is. Note the trade-off: this also excludes a shared
+# .claude/settings.json, so team-wide Claude Code config can't be checked in.
+# If the team wants that, narrow this to .claude/settings.local.json.
+.claude/

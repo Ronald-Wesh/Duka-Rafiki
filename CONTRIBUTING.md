@@ -12,26 +12,39 @@ If the two ever disagree, `README.md` §10 wins — fix this file.
 
 | Pillar | Owner | GitHub | Folder — work only here |
 |---|---|---|---|
-| P0 — Platform/Infra | Person D | `@Ronald-Wesh` *(confirm)* | `src/webhook/`, `src/core/`, `demo/` |
-| P1 — Reconciliation | Person A | *unclaimed* | `src/pillar1-reconciliation/`, `src/db/schema.sql` |
+| P0 — Platform/Infra | Person D | `@Ronald-Wesh` | `src/webhook/`, `src/core/`, `demo/`, build config |
+| P1 — Reconciliation | Person A | *fill in* | `src/pillar1-reconciliation/`, `src/db/schema.sql` |
 | P2 — Retention | Person B | `@arthuradinder` | `src/pillar2-retention/` |
-| P3 — Statement | Person C | *unclaimed* | `src/pillar3-statement/` |
+| P3 — Statement | Person C | *fill in* | `src/pillar3-statement/` |
 
 Fill in the blanks as people claim pillars. Once every owner has **write access** to
 this repo, promote this table into `.github/CODEOWNERS` so reviewers auto-assign —
 CODEOWNERS entries are silently ignored for users without write access, which is why
 it isn't checked in yet.
 
-## 2. Getting write access (do this first)
+## 2. Push access, and the 403 that isn't what it looks like
 
-The repo lives at `github.com/Ronald-Wesh/Duka-Rafiki`. Pushing a branch requires
-being a collaborator. **@Ronald-Wesh** grants it:
+The repo lives at `github.com/Ronald-Wesh/Duka-Rafiki`. Pushing needs collaborator
+access, which **@Ronald-Wesh** grants via Settings → Collaborators → *Add people*,
+with the **Write** role.
 
-> Repo → **Settings** → **Collaborators** → *Add people* → invite each teammate
-> with the **Write** role.
+If you hit `403 ... Permission to Ronald-Wesh/Duka-Rafiki.git denied to <name>`,
+**read the name in that message before asking for an invite.** If it isn't your
+account, git is using a cached credential for a different GitHub login — a work
+account, usually — and you may already have access. On Windows:
 
-Until your invite is accepted, use the fork route in §3b. Both routes produce the
-same thing — a PR into `main` — so nobody is blocked waiting on an invite.
+```bash
+git push                                   # note which account the 403 names
+cmdkey /list | findstr github              # see which account is cached
+cmdkey /delete:git:https://github.com      # drop it
+git config --local credential.https://github.com.username <your-username>
+git push                                   # re-authenticate in the browser as you
+```
+
+Deleting that entry only clears a saved sign-in — you re-authenticate in the
+browser and nothing is lost. If the 403 still names *you* afterwards, then it
+really is a missing invite: use the fork route in §3b meanwhile, which produces
+the same thing (a PR into `main`), so nobody is blocked waiting.
 
 ## 3. Branching
 
