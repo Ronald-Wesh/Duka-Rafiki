@@ -9,4 +9,6 @@ export const config = {
   twilioAuthToken: process.env.TWILIO_AUTH_TOKEN ?? "",
   twilioWhatsappFrom: process.env.TWILIO_WHATSAPP_FROM ?? "",
   anthropicApiKey: process.env.ANTHROPIC_API_KEY ?? "",
+  // Public origin the WhatsApp statement link points at — the ngrok URL on demo night.
+  publicBaseUrl: (process.env.PUBLIC_BASE_URL ?? `http://localhost:${process.env.PORT ?? 3000}`).replace(/\/$/, ""),
 };

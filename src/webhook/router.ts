@@ -23,9 +23,10 @@ router.post("/webhook", async (req: Request, res: Response) => {
 async function routeMessage(from: string, body: string): Promise<string | null> {
   const text = body.trim().toLowerCase();
 
-  if (text === "nataka report") {
-    // TODO(P3): generate statement, return link/summary
-    return "Report generation not wired up yet.";
+  if (/\b(ripoti|report|statement|taarifa)\b/.test(text)) {
+    const { generateStatement } = await import("../pillar3-statement");
+    const { url, summary } = await generateStatement();
+    return `Your transaction record is ready:\n${url}\n\n${summary}`;
   }
 
   // TODO(P1): detect forwarded M-Pesa SMS vs. free-text sale vs. cash entry

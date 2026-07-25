@@ -50,7 +50,8 @@ export async function phraseSummary(b: StatementBreakdown): Promise<string> {
     if (clean.length === 0) return templateSummary(b);
     return clean;
   } catch (err) {
-    console.error("[P3] narrative failed, using template:", err);
+    // One line, not a full API error dump — this fires on stage.
+    console.error("[P3] narrative failed, using template:", (err as Error)?.message ?? err);
     return templateSummary(b);
   }
 }
