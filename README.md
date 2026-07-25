@@ -1,135 +1,171 @@
 # AI Mashinani — Duka Ledger
+A WhatsApp-only companion for Kenyan kiosk owners (persona: "Mama Njeri") who use Pochi la Biashara / Buy Goods tills and cash, and have no POS. The bot turns daily sales logging into three outcomes from one shared ledger: (1) reconciliation of expected vs. reported sales, (2) a retention list built passively from M-Pesa payment SMS (which already contain payer names), and (3) an exportable, explainable financial statement the owner can show a SACCO or digital lender. Reconciliation is the spine; retention and the statement are downstream consumers of the same ledger data. It lives where the trader already is — WhatsApp. No app to download.
 
-WhatsApp-based transaction-record tool for cash-based micro-traders. A shopkeeper
-captures their business — by photo of an existing paper ledger, or by voice/text
-in English/Swahili/Sheng — and the tool turns it into a confirmed, structured
-record they own, then compiles it into a lender-readable financial statement.
-Not a POS. Not an app to download. It lives where the trader already is: WhatsApp.
+Beneficiary (locked): This helps a cash-based micro-trader — one of the 7.4 million MSMEs that make up 98% of Kenyan businesses — who today has no financial statement to show a lender, because their business exists only in memory and loose cash.
 
-**Beneficiary (locked):** This helps a cash-based micro-trader — one of the 7.4
-million MSMEs that make up 98% of Kenyan businesses — who today has no financial
-statement to show a lender, because their entire business exists only in memory
-and loose cash.
+2. Persona (do NOT redesign mid-hackathon)
 
-AI strategy: orchestrate existing hosted models (Claude for vision + language) —
-no custom model training. The model does language and extraction; all arithmetic
-and records are deterministic code.
+Mama Njeri — grocery/general kiosk owner, 2+ years in business, accepts Pochi la Biashara / Buy Goods + cash. Recognizes ~10–15 regulars by face but can't name or reach them in bulk. Gives informal deni (credit) to a few trusted customers. Wants to expand but has no bank-usable proof of business viability. Low phone storage — WhatsApp is the only acceptable interface. Never suggest a native app or new install.
 
-## Scope
+3. Scope — what's in, what's out
+Core (must work live)
+Primary input: forwarded M-Pesa Buy Goods/Pochi SMS + manual cash entries, in English/Swahili/Sheng code-switched text or voice.
+Parse SMS into {amount, payer_name, till, timestamp}; parse free-text/voice sales into structured transactions.
+Reconciliation — daily close: expected (sum of logged) vs. owner-reported total, with variance.
+Retention — customer profiles built passively from SMS payer names; repeat- visit detection; weekly "your regulars" summary + draftable promo message.
+Debt tracking by name — tag a sale as deni to a named customer (not phone number); disambiguator field for duplicate names (e.g. "Mary - blue uniform").
+Financial statement generator — compiles confirmed transactions into a lender-readable document: sales volume, estimated margin, day-to-day cash-flow consistency, outstanding receivables (deni), reconciliation accuracy.
+Optional / stretch (kept in code, NOT load-bearing for the demo)
+Paper-ledger photo backfill — Claude vision reads a photographed handwritten page into a structured table, for onboarding history. Highest-risk parse, so it is a bonus path, never a demo dependency. When used, it gets per-line confidence flagging (ambiguous digits, shorthand like "50/-", "2 mnd", faded/ overlapping entries flagged individually), a verification loop (bot returns the clean version with flagged lines marked; owner corrects only flagged lines in plain language, e.g. "line 3 is 56"), and the unconfirmed-entry rule: entries never confirmed are excluded from the statement or marked "self-reported, unconfirmed" — never silently treated as verified.
+Explicitly cut tonight (state out loud if asked)
+Any numeric credit score, band, or creditworthiness rating. We are not a licensed financial-service provider. The output is a transaction record / financial statement — descriptive figures over a stated date range, clearly labelled as a record. The words "credit score", "band", "rating", "creditworthiness" appear nowhere in product, schema, or pitch.
+Photo capture of loose products for general inventory (open-ended recognition risk).
+User auth / multi-tenant — single demo shopkeeper is enough.
+Real lender/SACCO API integration — the statement itself is the artifact, not a live loan pipeline.
+Long-term roadmap (say this is where the statement becomes primary)
+Accumulated statements mature from "a few weeks of receipts" into portable, trader-owned financial history — not gatekept by one lender.
+Partnership model, not lending model: plug statement output into existing microfinance / chama / SACCO underwriting rather than scoring ourselves.
+Loose-product photo inventory revisited once there's time to validate it properly.
+4. The pillars + who owns what
+Pillar	Owner	Core job
+P1 — Reconciliation	Person A	Ingest M-Pesa SMS forwards + manual cash entries; parse into transactions; run daily reconciliation; own the shared ledger schema
+P2 — Retention	Person B	Build customer profiles from parsed payer names; detect repeat visits; generate weekly "your regulars" summaries + draftable promos
+P3 — Statement	Person C	Compute the descriptive statement metrics from ledger data; generate the PDF/shareable report
+P0 — Platform/Infra	Person D	WhatsApp webhook, message router, shared Claude client, DB setup, demo seed data, deploy/glue
 
-### Core — must work live
+Pillars 1–3 all read/write the same shared ledger tables (P1's schema). Do not fork the data model — extend via migration, and flag schema changes to the team before merging.
 
-* **Input channels** — WhatsApp (Twilio Sandbox), two entry paths:
-  * *Paper capture* — photo of an existing handwritten ledger page (backfill / onboarding).
-  * *Voice/text* — day-to-day new entries going forward; English/Swahili/Sheng code-switched.
-* **Paper ledger extraction** — Claude vision reads the photographed page into a
-  structured table (date, item, qty, price).
-* **Per-line confidence flagging** — each extracted line gets its own confidence
-  flag, not the whole page. Ambiguous digits, local shorthand ("50/-", "2 mnd"),
-  faded/overlapping entries are flagged individually.
-* **Verification loop** — the bot returns the clean digital version with flagged
-  lines clearly marked; the owner replies in plain language to correct only the
-  flagged lines (e.g. "line 3 is 56").
-* **Unconfirmed-entry rule** — entries never confirmed by the owner are excluded
-  from the statement, or explicitly marked "self-reported, unconfirmed." Never
-  silently treated as verified.
-* **Day-to-day logging** — voice note or text for new sales: item, quantity,
-  price, running stock deduction.
-* **Debt tracking by name** — tag a sale as "on credit" to a named customer (not
-  phone number); simple disambiguator field for duplicate names (e.g. "Mary - blue uniform").
-* **Daily plain-language summary** — what sold, what didn't, today's estimated
-  profit/margin by product. Computable from one day, no history needed.
-* **Remaining stock view** — live checklist updated after each confirmed sale.
+5. Architecture principle (non-negotiable)
 
-### Secondary — this hackathon's differentiator (early version of the long-term product)
+The model does language: parse SMS/voice/text, extract handwriting (stretch), phrase summaries and promos. All arithmetic and records are deterministic code: running totals, variance, margins, received-vs-paid balances, every figure in the statement. The model is never asked to compute a number that appears in the statement — it is handed computed numbers and asked only to phrase them. This keeps every figure on stage correct and auditable, and keeps the statement metrics inspectable (a requirement, not a preference — "explainable record" is core to the pitch).
 
-* **Financial statement generator** — compiles confirmed transactions (paper
-  backfill + logged days) into a lender-readable document: sales volume, estimated
-  margin, day-to-day cash-flow consistency, outstanding debts owed (receivables),
-  stock movement.
-* **Explicit statement labeling** — date range covered, clearly marked as a
-  transaction record. Never "credit score" or "creditworthiness rating," anywhere
-  in product or pitch.
-* **Live demo on real data** — paper backfill + a few hours of event-logged
-  entries, no synthetic history. Honesty about the limited data range is the
-  strength, not a weakness to hide.
+6. Tech stack (keep it boring — it's a hackathon)
+Interface: Twilio WhatsApp sandbox (chosen — faster to demo, no business verification). Do not also build the Meta Cloud API path.
+Backend: Node.js + Express (or Fastify). TypeScript preferred; plain JS fine under time pressure.
+AI: Anthropic API (Claude) for: parsing free-text/voice into structured transactions, parsing forwarded M-Pesa SMS into {amount, payer_name, till, timestamp}, drafting promos, phrasing summaries, and (stretch) ledger-photo extraction.
+DB: SQLite for the demo (file-based, easy to seed and reset). No Postgres unless someone already has it running — speed over correctness.
+Reports: pdfkit, or puppeteer rendering an HTML template — or a clean shareable HTML page if PDF eats too much time. A pre-designed template populated with confirmed numbers is acceptable and looks identical on stage.
+Hosting for demo: ngrok (or similar) tunnel for the webhook. No production deploy.
+7. Repo structure (build inside these folders; don't restructure without discussion)
+/src
+  /webhook          # P0: WhatsApp inbound/outbound, message routing
+    router.ts
+    whatsapp-client.ts
+  /core             # P0 + shared: DB access, Claude client, shared types, prompts
+    db.ts
+    claude-client.ts
+    types.ts          # Transaction, Customer, ReconciliationResult, Statement
+    config.ts
+    /prompts          # versioned prompt files — NOT inline strings
+  /pillar1-reconciliation   # P1
+    parse-transaction.ts
+    parse-mpesa-sms.ts
+    reconcile.ts
+  /pillar2-retention        # P2
+    customer-profile.ts
+    repeat-detection.ts
+    promo-drafts.ts
+  /pillar3-statement        # P3
+    statement-metrics.ts     # descriptive, inspectable — NO score/band
+    report-generator.ts      # PDF/HTML statement
+  /pillar-optional          # stretch: paper-ledger backfill
+    parse-ledger-photo.ts
+  /db
+    schema.sql          # single source of truth for tables
+    migrations/
+/demo
+  seed-data.ts           # 3-4 weeks of mock SMS + cash, Swahili/Sheng phrasing
+  demo-script.md         # exact WhatsApp conversation flow for the live demo
+/docs
+  architecture.md
+  data-model.md
+.env.example
+CLAUDE.md               # this file
+README.md
+8. Shared data model (P1 owns changes)
+sql
+-- db/schema.sql
+CREATE TABLE customers (
+  id INTEGER PRIMARY KEY,
+  name TEXT,                 -- from M-Pesa SMS payer name, or manually tagged
+  phone TEXT,                -- nullable, often unavailable from SMS
+  disambiguator TEXT,        -- e.g. "blue uniform" for duplicate names
+  first_seen DATETIME,
+  last_seen DATETIME
+);
 
-### Explicitly cut from tonight (state this out loud if asked)
+CREATE TABLE transactions (
+  id INTEGER PRIMARY KEY,
+  customer_id INTEGER REFERENCES customers(id),  -- nullable for anonymous cash
+  type TEXT CHECK(type IN ('sale','deni','deni_repayment','restock')),
+  amount REAL NOT NULL,
+  channel TEXT CHECK(channel IN ('mpesa_buygoods','cash')),
+  confirmed INTEGER DEFAULT 0,  -- 0 = self-reported/unconfirmed, 1 = owner-confirmed
+  raw_input TEXT,               -- original message/SMS text, for audit + reparse
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
 
-* Photo capture of loose products for general inventory (as opposed to reading a
-  paper ledger) — too much open-ended recognition risk.
-* Any numeric credit score or risk rating — not our call as a non-financial-service-provider.
-* Customer tracking beyond the debt/credit use case — no general CRM or
-  purchase-history analytics.
+CREATE TABLE daily_reconciliations (
+  id INTEGER PRIMARY KEY,
+  date DATE NOT NULL,
+  expected_total REAL,        -- sum of logged transactions
+  reported_total REAL,        -- owner-confirmed total at day close
+  variance REAL,
+  notes TEXT
+);
 
-### Long-term roadmap (where statement generation becomes primary)
+-- Descriptive statement record. NOT a score. No band, no rating.
+CREATE TABLE statements (
+  id INTEGER PRIMARY KEY,
+  generated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  period_start DATE,
+  period_end DATE,
+  total_sales REAL,
+  estimated_margin REAL,
+  cashflow_consistency_note TEXT,   -- descriptive, e.g. "sales logged 26 of 30 days"
+  outstanding_receivables REAL,     -- total deni owed to the trader
+  reconciliation_accuracy REAL,     -- % of days reconciled within tolerance
+  summary_json TEXT                 -- plain-English breakdown for the document
+);
 
-* Accumulated statements mature from "a few days of receipts" into genuine,
-  portable credit-history documentation the trader owns — not gatekept by one lender.
-* Partnership model, not lending model: plug the statement output into existing
-  microfinance / chama / SACCO underwriting rather than becoming a scorer ourselves.
-* Loose-product photo inventory revisited once there's time to validate it properly.
-* Broader customer-relationship data once there's a real, consent-based way to collect it.
+Anyone adding a column: update schema.sql AND add a one-line note in docs/data-model.md. Do not silently diverge.
 
-## Architecture principle
+9. Pillar interfaces (contract — keep stable)
+P1 exposes reconcileDay(date): ReconciliationResult and is the only writer of transactions + daily_reconciliations.
+P2 reads transactions + customers only. Never writes reconciliation or statement tables.
+P3 reads transactions, customers, daily_reconciliations; writes statements. Metrics must be a pure function of ledger data — no hidden state — so they're explainable in the document and the pitch.
+If P2/P3 needs a field P1 hasn't exposed, ask P1 to add it to types.ts rather than reaching into the DB with ad-hoc queries.
+10. Branching & workflow
+main — always demo-able. Nobody pushes directly.
+Branches: pillar1-reconciliation, pillar2-retention, pillar3-statement, platform-infra (P0).
+Branch from main; work in your pillar folder only. Changes to /core or schema.sql are shared surface area — heads-up to the team first.
+Small, frequent PRs into main — not one giant end-of-night merge. Conflicts at hour 20 kill demos.
+Before merging: pull latest main, run the seed script, confirm your pillar still works against current shared types/schema.
+P0 merges first and most often — webhook/core is everyone's foundation.
+Sync every 2–3 hours, even a 5-minute "does main still boot" check.
+11. Claude Code usage notes
+Claude Code is the primary way code gets written across all branches — it's the hackathon's build constraint. Keep it visible in commit/PR messages where "built with Claude Code" may matter to judging.
+Starting a session on a pillar branch: point Claude Code at this file + the relevant pillar folder + core/types.ts. Don't let it re-derive the schema.
+Keep parsing/phrasing prompts in /src/core/prompts/ as versioned files, not inline strings scattered across pillars — tune once, everyone benefits.
+Statement metrics (P3) stay descriptive and inspectable — no scoring model, no band. Product requirement, not just style.
+12. Demo — definition of done
 
-The model does **language** (parse voice/text, extract handwriting, phrase
-summaries). All **arithmetic and records** are deterministic code — running
-totals, margins, received-vs-paid balances, the statement figures. The model is
-never asked to compute a number that appears in the statement; it is handed
-computed numbers and asked only to phrase them. This keeps every figure on stage
-correct and auditable.
+One narrative, under 3 minutes:
 
-## Stack
+A forwarded M-Pesa Buy Goods SMS auto-creates/updates a customer record (payer name lifted from the SMS — a clean live moment).
+A few more seeded days of mixed cash + Buy Goods activity roll in.
+Owner gets a weekly "your top regulars" WhatsApp message with a draftable promo.
+Owner sends "nataka report" → bot returns a one-page PDF/link: sales trend, reconciliation accuracy, deni repayment rate, outstanding receivables — clearly labelled a transaction record over [date range], with plain-English reasoning. No score, no band.
 
-* **Twilio Sandbox for WhatsApp** — input/output channel (voice, image, text).
-* **Claude API** — vision (ledger extraction) + language (parsing, phrasing). Credits provided on the night.
-* **Backend** — webhook receiver → parse/extract → confirm loop → ledger store.
-* **Ledger store** — structured transaction records (local/lightweight DB).
-* **Statement output** — lender-readable document from confirmed transactions.
+Demo discipline:
 
-## Getting Started
-
-1. Join the Twilio WhatsApp sandbox
-
-   From the demo phone, send the sandbox join code to the Twilio sandbox number.
-   Do this BEFORE the demo — the phone must already be joined.
-
-2. Expose the webhook
-
-   Run the backend locally and tunnel it to a stable public URL (e.g. ngrok), then
-   set that URL as the Twilio WhatsApp inbound webhook. Keep the tunnel up through
-   the demo — pre-flight it well before stage time, not at 3:25 am.
-
-3. Configure environment
-
-   ```
-   cp .env.example .env.local
-   ```
-
-   ```
-   ANTHROPIC_API_KEY=...
-   TWILIO_ACCOUNT_SID=...
-   TWILIO_AUTH_TOKEN=...
-   TWILIO_WHATSAPP_FROM=whatsapp:+14155238886
-   ```
-
-   `.env.local` is gitignored — never commit real keys.
-
-## Team (4)
-
-Suggested split — one owner each:
-
-1. **Twilio + input parse** — webhook, media handling, voice/text → structured entry.
-2. **Confirm-and-commit UX** — the render-back + per-line flag + correction loop.
-3. **Ledger + deterministic math** — running totals, received-vs-paid, margins, stock.
-4. **Statement generator + phrasing** — lender-readable output + Swahili/English summaries.
-
-## Demo discipline
-
-* Pre-test the ONE ledger photo you demo with at ~2 am; know exactly which lines flag.
-* The photographed ledger page IS your history — it must contain a real
-  received-vs-paid gap for a named customer, so the summary has something to expose.
-* One live input on stage (a single voice note) fires against the confirmed backfill.
-* Write an eval set (messy-ledger lines + received-vs-paid math with known correct
-  answers) BEFORE building, so at 3 am you can verify correctness instead of hoping.
+/demo/seed-data.ts produces 3–4 weeks of realistic history (Swahili/Sheng phrasing) so the flow works on a fresh clone. Shared P0 responsibility; every pillar sanity-checks its piece against it before the final run.
+Pre-flight the Twilio sandbox join + ngrok tunnel well before stage time — the demo phone must already be joined, the tunnel must stay up. Do this at ~2 am, not 3:25.
+If demoing the optional ledger-photo path, pre-test the ONE photo at ~2 am and know exactly which lines flag. Never shoot a fresh page live for the first time.
+13. Things to explicitly avoid (time sinks that don't serve the pitch)
+No native app or PWA — WhatsApp-only is the point.
+No real lender/SACCO API — the statement is the artifact, not a loan pipeline.
+No auth/multi-tenant — one demo shopkeeper.
+No ML/black-box scoring — descriptive, inspectable record wins the pitch.
+No numeric credit score or band, anywhere — we are not an FSP.
+Don't let /core become a bikeshed — P0 makes the call; others raise concerns via PR comment, not by rewriting it.
