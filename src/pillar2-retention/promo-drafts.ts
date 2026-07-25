@@ -254,7 +254,7 @@ export interface DraftResult {
   text: string;
   /** How the text was produced — surfaced so the demo can say which path ran. */
   source: 'claude' | 'deterministic-fallback';
-  /** Set when the model was tried and its output was not used. */
+  /** Why model output was not used: it failed, was rejected, or was not consulted. */
   rejectedReason?: string;
   /** Prompt file used, for reproducing a bad draft later. */
   promptName?: string;
@@ -276,6 +276,19 @@ export async function draftRegularsSummary(
 ): Promise<DraftResult> {
   const fallback = renderRegularsSummaryText(summary);
   if (!ask) return { text: fallback, source: 'deterministic-fallback' };
+
+  // An empty week has no figures, so `assertFiguresPreserved` has nothing to
+  // match on and would accept literally any prose — including a fluent message
+  // naming customers who do not exist. There is nothing to phrase here anyway, so
+  // the model is not consulted rather than trusted unverifiably.
+  if (summary.regulars.length === 0) {
+    return {
+      text: fallback,
+      source: 'deterministic-fallback',
+      rejectedReason: 'no regulars this week — no figures to verify model output against',
+      promptName: REGULARS_SUMMARY_PROMPT,
+    };
+  }
 
   let phrased: string;
   try {
@@ -302,6 +315,9 @@ export async function draftRegularsSummary(
   return { text: phrased, source: 'claude', promptName: REGULARS_SUMMARY_PROMPT };
 }
 
+/** A promo draft, plus who it is aimed at. */
+export type PromoDraftResult = DraftResult & { recipients: RankedRegular[] };
+
 /**
  * Draft a win-back promo aimed at the summary's lapsing regulars.
  *
@@ -317,7 +333,7 @@ export async function draftWinBackPromo(
   summary: RegularsSummary,
   offer: string,
   ask?: PromptRunner,
-): Promise<DraftResult & { recipients: RankedRegular[] }> {
+): Promise<PromoDraftResult> {
   const recipients = summary.lapsing;
   const trimmedOffer = offer.trim();
 

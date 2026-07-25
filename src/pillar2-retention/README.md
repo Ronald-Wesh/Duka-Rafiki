@@ -198,9 +198,48 @@ or a manual fix? P2 can surface them either way.
 ## Verifying it
 
 ```bash
-npx tsc --noEmit                                    # clean
-npx ts-node src/pillar2-retention/smoke-check.ts    # 62/62 checks pass
+npx tsc --noEmit                                     # clean
+npx ts-node src/pillar2-retention/smoke-check.ts     #  62/62 — happy path
+npx ts-node src/pillar2-retention/edge-cases.ts      # 196/196 — boundaries
+npx ts-node src/pillar2-retention/db-check.ts        #  60/60 — real SQLite
 ```
+
+**318 checks total**, all offline except `db-check.ts`, which needs a working
+`better-sqlite3` binding (fine on the repo's pinned Node 20; on Node 24 you need
+`better-sqlite3@^12`). `db-check.ts` builds its own throwaway database and deletes
+it, so it never touches `duka.db`.
+
+| Harness | Covers |
+|---|---|
+| `smoke-check.ts` | the happy path — is the arithmetic right? |
+| `edge-cases.ts` | empty inputs, malformed and boundary timestamps, midnight/year-end/leap rollovers, float drift, ties, zero and negative amounts, non-Latin names, orphan rows, future dates, and every way the model can misbehave |
+| `db-check.ts` | `queries.ts` + `service.ts` against real rows written the way P1 writes them, plus proof that P2 wrote nothing |
+
+### Two real bugs the edge cases caught
+
+Both were invisible to `tsc` and to the happy-path suite:
+
+1. **`detectRepeatVisit` counted later-dated rows.** `visitNumber` was
+   `sorted.length` over *all* visit days, including any dated after the visit
+   being reported. Backfilled or out-of-order history — a paper-ledger import, a
+   late SMS forward — would make the bot announce "your 5th visit" to someone on
+   their 2nd. Now counts only days up to and including the reported visit.
+2. **An empty week let Claude say anything.** With no regulars,
+   `figuresToPreserve` is empty, so `assertFiguresPreserved` had nothing to match
+   and accepted any prose — including a fluent message naming customers who do not
+   exist. `draftRegularsSummary` now skips the model entirely when there are no
+   regulars, since there is nothing to phrase and nothing to verify against.
+
+Also fixed: `service.ts` typed the promo as `DraftResult`, hiding the
+`recipients` field the function actually returns.
+
+### Known limitation, recorded rather than assumed handled
+
+An out-of-range **day** in a timestamp is not rejected — `new Date` rolls it over,
+so `2026-02-30` silently becomes 2 March. Catching it needs a component-by-component
+round-trip check. Left alone deliberately: SQLite's `DATETIME` cannot produce such a
+string, so the only source would be an already-broken writer, and an out-of-range
+*month* is caught. Pinned by a test so it stays a known quantity.
 
 `smoke-check.ts` is a known-answer check: every figure is asserted against a
 hand-computed expected value, and it runs offline with no API key and no
@@ -225,14 +264,15 @@ could never have found that.
 Compiles clean under `strict: true`, passes 62/62 of its own checks, and is wired
 into the router's `regulars` intent. Caveats worth knowing:
 
-- **The `better-sqlite3` path is unverified.** The native module has no Node 24
-  prebuild and is unbuilt on the machine this was written on, so `queries.ts` has
-  never opened a real database. I verified the SQL, the column names and the
-  row→type mapping by running the *same schema and the same query strings* through
-  Node 24's built-in `node:sqlite`, with rows shaped exactly as P1's writers
-  produce them — the full chain to a rendered WhatsApp message works. But somebody
-  needs to run `npm run seed && npm run dev` in WSL and hit the `regulars` intent
-  before we call this done.
+- **The database path is now verified.** `db-check.ts` runs `queries.ts` and
+  `service.ts` against a real SQLite file with rows written exactly as P1's parsers
+  write them, and asserts that all four tables are byte-for-byte unchanged
+  afterwards. (Done locally with `better-sqlite3@^12` installed via `--no-save`,
+  because v11 has no Node 24 prebuild; `package.json` is untouched.)
+- **Still unverified: the live WhatsApp round trip.** Nobody has run
+  `npm run seed && npm run dev` in WSL and sent "nionyeshe wateja wangu" through
+  the Twilio sandbox. Everything up to the router's return value is covered; the
+  webhook → Twilio → phone leg is not.
 - **No real Claude call yet.** The model seam is exercised with fakes only
   (faithful, dropping, altering, throwing, empty).
 - **The weekly summary has no automatic trigger.** It fires when the owner asks
@@ -242,13 +282,19 @@ into the router's `regulars` intent. Caveats worth knowing:
 
 ### Two heads-ups for P0 (both outside my folder, so not fixed here)
 
-**1. `better-sqlite3@11` won't install on current Node LTS.** Node 24 has no
-prebuilt binary for it, so `npm install` drops to `node-gyp` and fails without
-Python and MSVC build tools. I got a working install with
-`npm install --ignore-scripts`, which is fine for typechecking but leaves the
-native module unbuilt — so it won't actually open a database. Bumping to
-`better-sqlite3@^12` (which ships Node 24 prebuilds) or pinning the team to Node
-22 both fix it. Worth settling before someone hits it at 3am.
+**1. `better-sqlite3@11` won't install on Node 24.** No prebuilt binary, so
+`npm install` drops to `node-gyp` and fails without Python and MSVC. Node 20 (the
+pinned `.nvmrc`) is fine, so this only bites anyone who ignores `nvm use` — but it
+bites hard and the error names Python, not Node, so it reads like a machine
+problem rather than a version problem. `better-sqlite3@^12` ships Node 24
+prebuilds and fixes it; I verified v12 works on Node 24 locally, installed with
+`--no-save` so `package.json` is unchanged. Your call whether to bump.
+
+Worth knowing while you're in there: **`better-sqlite3` turns `PRAGMA
+foreign_keys` ON by default.** The schema's `REFERENCES customers(id)` is
+therefore enforced, so `parseMpesaSms` must create the customer before inserting
+the transaction or the insert fails outright. It already does — but a future
+writer that doesn't will get a hard `FOREIGN KEY constraint failed`, not a NULL.
 
 **2. `loadPrompt()` breaks in the built output.** It resolves prompts relative to
 `__dirname`, so `npm run dev` (ts-node, `__dirname` = `src/core`) finds the `.md`

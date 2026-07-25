@@ -130,10 +130,15 @@ export function detectRepeatVisit(
 
   const sorted = [...days].sort();
   const priorDays = sorted.filter((key) => key < todayKey);
+  // Count only up to and including the visit being reported. Rows dated *after*
+  // it must not inflate the ordinal — otherwise backfilled or out-of-order
+  // history (a paper-ledger import, a late SMS forward) makes the bot announce
+  // "your 5th visit" to someone on their 2nd.
+  const daysUpToNow = sorted.filter((key) => key <= todayKey);
 
   return {
     isRepeat: priorDays.length > 0,
-    visitNumber: sorted.length,
+    visitNumber: daysUpToNow.length,
     previousVisitDate: priorDays.length > 0 ? priorDays[priorDays.length - 1] : null,
   };
 }

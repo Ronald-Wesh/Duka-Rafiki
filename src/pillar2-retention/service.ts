@@ -23,6 +23,7 @@ import {
   type DraftResult,
   draftRegularsSummary,
   draftWinBackPromo,
+  type PromoDraftResult,
   type PromptRunner,
 } from './promo-drafts';
 import {
@@ -143,9 +144,10 @@ export interface WeeklyRegularsMessage extends RegularsSummaryResult {
   phrasing: DraftResult;
   /**
    * A promo the owner can edit and forward, present only when someone has
-   * actually gone quiet. Never sent automatically — P2 sends nothing.
+   * actually gone quiet. Carries `recipients` so the caller can see who it is
+   * for. Never sent automatically — P2 sends nothing.
    */
-  promo?: DraftResult;
+  promo?: PromoDraftResult;
 }
 
 /**
