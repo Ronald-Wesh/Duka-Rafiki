@@ -14,4 +14,6 @@ export const config = {
   metaWabaId: process.env.META_WABA_ID ?? "",
 
   anthropicApiKey: process.env.ANTHROPIC_API_KEY ?? "",
+  // Public origin the WhatsApp statement link points at — the ngrok URL on demo night.
+  publicBaseUrl: (process.env.PUBLIC_BASE_URL ?? `http://localhost:${process.env.PORT ?? 3000}`).replace(/\/$/, ""),
 };

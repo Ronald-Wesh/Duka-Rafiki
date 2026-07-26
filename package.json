@@ -11,6 +11,8 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "seed": "ts-node demo/seed-data.ts",
+    "seed:statement": "ts-node demo/seed-statement.ts",
+    "test:p3": "ts-node src/pillar3-statement/statement-metrics.test.ts",
     "check:intents": "ts-node demo/check-intents.ts",
     "check:seed": "ts-node demo/check-seed.ts",
     "check:prompts": "ts-node demo/check-prompts.ts",

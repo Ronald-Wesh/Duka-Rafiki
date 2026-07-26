@@ -184,16 +184,10 @@ async function dispatch(intent: Intent, body: string): Promise<string> {
 
     case "report":
       return pillarCall("Ripoti", async () => {
-        const { computeStatementMetrics } = await import(
-          "../pillar3-statement/statement-metrics"
-        );
-        const { generateReport } = await import(
-          "../pillar3-statement/report-generator"
-        );
-        const today = new Date().toISOString().slice(0, 10);
-        const metrics = computeStatementMetrics(today, today);
-        await generateReport({ ...metrics, id: 0, generated_at: today });
-        return "Ripoti yako iko tayari 📄";
+        const { generateStatement } = await import("../pillar3-statement");
+        // Defaults to the trailing 28 days — a one-day period is not a record.
+        const { url, summary } = await generateStatement();
+        return `Ripoti yako iko tayari 📄\n${url}\n\n${summary}`;
       });
   }
 }
