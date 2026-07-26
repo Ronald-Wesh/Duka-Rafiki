@@ -1,6 +1,9 @@
 import dotenv from "dotenv";
 
-dotenv.config();
+// override: a key exported in someone's shell profile silently beats .env
+// otherwise, and the app falls back to a dead key with no visible error.
+// The project's .env is the source of truth for everyone on the team.
+dotenv.config({ override: true });
 
 export const config = {
   port: Number(process.env.PORT ?? 3000),
