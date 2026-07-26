@@ -20,8 +20,8 @@ it, run another.
 
 {{SCHEMA}}
 
-`item` and `party` are free text and often NULL — older entries have no item at
-all. Match with LIKE and expect misses. If a query comes back empty, that is an
+`item` and `party` are free text and often NULL — entries logged before item
+tracking have no item at all. Match with LIKE and expect misses. If a query comes back empty, that is an
 answer: say the records do not show it, and say what she could log to make it
 answerable next time.
 

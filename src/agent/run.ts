@@ -1,7 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { config } from "../core/config";
 import { loadPrompt } from "../core/claude-client";
-import { SCHEMA_DESCRIPTION } from "./dynamic-db";
+import { SCHEMA_DESCRIPTION } from "./ledger-store";
 import { TOOL_DEFS, queryLedger, recordEntries, NewEntry } from "./tools";
 import type { Attachment } from "./media";
 
