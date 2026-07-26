@@ -1,7 +1,7 @@
 # P0 Progress Log
 
 Last updated: 2026-07-26
-Current status (one line): **prompts now verified against the live Claude API (7/7)** after fixing a client bug that broke every model call; Meta verification passed; only the real phone-to-bot round trip is left, which needs a live tunnel
+Current status (one line): **tunnel live and the full chain verified end to end** (health, Meta handshake, POST routing, P3 statement page — all over the public URL); prompts 7/7 against the real API; only the real phone-to-bot round trip remains, which needs the demo handset on Meta's recipient allowlist
 
 ## Done
 
@@ -48,6 +48,9 @@ Current status (one line): **prompts now verified against the live Claude API (7
 - **P1**: `day_close` currently calls `reconcileDay(today)` but has no way to hand you the owner's *reported* total, which is the whole point of the close. Needs a signature that accepts it — flagged, not yet designed.
 - **P2**: router calls `detectRepeatVisits(7)` and expects `number[]` of customer IDs.
 - **P3**: router calls `computeStatementMetrics(start, end)` then `generateReport(...)`. The date range is today-to-today as a placeholder.
+- ### 🔴 P3 — the summary's 87% doesn't reconcile with "23 of 28 days"
+  Live output: *"reconciliation accuracy for the period was 87%, based on 23 days closed out of 28 days with recorded activity."* **23/28 is 82%, not 87%.** The 87% is presumably a different metric (days *within tolerance*, per README §8), but the sentence welds it to the 23/28 figure, so anyone who does the mental arithmetic — a judge, a loan officer — sees a number that doesn't add up. That directly undercuts the "every figure is explainable" pitch. Either have the prompt state the two figures separately, or feed it the denominator the 87% is actually computed from. Flagged to P3, not changed by P0.
+- **P3 — `PUBLIC_BASE_URL` must be set or the statement link is dead.** `generateStatement()` returned `http://localhost:3000/statement/2`, which is unreachable from the owner's handset. `.env` predates P3 adding the var to `.env.example`. **`.env` is gitignored, so this bites on every fresh clone and every tunnel restart** — set it to the live tunnel URL before demoing, and re-set it whenever the URL changes. Verified working once set: the page returns 200 over the public URL, titled "Transaction Record — …", with no scoring language.
 - **P1 — needs a decision, affects P3's numbers.** The seed defines a day's `expected_total` as **money in = sales + deni_repayment**, excluding `deni` (goods out, no cash) and `restock` (cash out). If `reconcileDay()` computes it differently, every variance in the seeded history is wrong and P3's reconciliation accuracy is meaningless. This needs agreeing, not assuming.
 - **All**: seed data is ready — run `npm run db:reset && npm run check:seed` and sanity-check your pillar against it.
 
