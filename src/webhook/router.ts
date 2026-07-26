@@ -135,6 +135,49 @@ router.post("/twilio-webhook", async (req: Request, res: Response) => {
 
   let reply: string;
   try {
+    // AGENT_MODE=1 routes to the tool-using agent over duka-dynamic.db.
+    // Unset, everything behaves exactly as before against duka.db.
+    if (process.env.AGENT_MODE === "1") {
+      const { runAgent } = await import("../agent/run");
+      const { mediaFromBody, downloadMedia, isImage, isAudio } = await import("../agent/media");
+
+      const media = mediaFromBody(req.body ?? {});
+      const attachments = [];
+      let audioCount = 0;
+
+      for (const m of media) {
+        if (isImage(m.contentType)) {
+          const a = await downloadMedia(
+            m.url,
+            String(req.body?.AccountSid ?? ""),
+            process.env.TWILIO_AUTH_TOKEN ?? ""
+          );
+          if (a) attachments.push(a);
+        } else if (isAudio(m.contentType)) {
+          audioCount++;
+        }
+      }
+      if (media.length) {
+        console.log(`[twilio] media: ${media.length} (${attachments.length} image, ${audioCount} audio)`);
+      }
+
+      // Voice notes need speech-to-text, which this stack has no provider for.
+      // Saying so beats silently ignoring the message.
+      if (audioCount > 0 && attachments.length === 0) {
+        const note =
+          "Bado siwezi kusikiliza voice note 🎙️ — niandikie kwa maandishi au tuma picha ya risiti/SMS ya M-Pesa.";
+        res.type("text/xml").send(`<Response><Message>${note}</Message></Response>`);
+        return;
+      }
+
+      reply = await runAgent(from, body, attachments);
+      const escapedAgent = reply.replace(/[<>&]/g, (c) =>
+        c === "<" ? "&lt;" : c === ">" ? "&gt;" : "&amp;"
+      );
+      res.type("text/xml").send(`<Response><Message>${escapedAgent}</Message></Response>`);
+      return;
+    }
+
     const r = await handleIncomingMessage({
       from,
       name: String(req.body?.ProfileName ?? "") || null,

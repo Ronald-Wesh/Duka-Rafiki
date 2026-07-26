@@ -5,3 +5,5 @@ dist/
 *.sqlite
 .claude/
 references/SKILL.md
+*.db-shm
+*.db-wal
