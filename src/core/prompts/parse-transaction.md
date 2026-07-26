@@ -7,6 +7,7 @@ or add up several items into a total you worked out yourself.
 
 ## Output
 
+
 Return raw JSON. No markdown fences, no commentary. Do not include internal or
 system XML tags in your response.
 
@@ -59,8 +60,13 @@ For **deni**, no money moved; still use `cash`.
 
 ## customer_name and disambiguator
 
-Only for `deni` and `deni_repayment`, where knowing who owes what is the point.
-Anonymous cash sales have no name — use `null`, and do not invent one.
+Whenever the owner names a person, keep that name — on a sale too, not only on
+`deni` and `deni_repayment`. She names a customer because she wants the entry
+tied to them: "Mary maziwa 100" is a sale to Mary, and recording it anonymously
+loses what she just told you.
+
+Most cash sales carry no name at all. Those use `null` — never invent one, and
+never treat a product, place, or greeting as a person.
 
 Names come as first names or nicknames. Keep what is written, Title Case, do not
 expand or correct.
@@ -84,6 +90,11 @@ not.
 
 `nimeuza maziwa 60`
 `{"type":"sale","amount":60,"channel":"cash","customer_name":null,"disambiguator":null,"needs_review":false}`
+
+`Mary maziwa 100`
+`{"type":"sale","amount":100,"channel":"cash","customer_name":"Mary","disambiguator":null,"needs_review":false}`
+
+A sale, not a debt — no credit marker. The name is kept because she wrote it.
 
 `mafuta ya taa 50/- ametuma kwa pochi`
 `{"type":"sale","amount":50,"channel":"mpesa_buygoods","customer_name":null,"disambiguator":null,"needs_review":false}`

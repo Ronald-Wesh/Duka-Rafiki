@@ -39,6 +39,10 @@ sentence, even if it mentions a Swahili product name.
   *"funga leo 3500", "close today 3500", "nilipata elfu tano leo",
   "I made 4200 today", "let's balance the day"*
 
+  Asking about today's takings counts too, even with no figure named:
+  *"leo nimetengeneza pesa ngapi", "nimeuza ngapi leo",
+  "how much have I made today?", "today's total?"*
+
 - **`regulars`** — her customers: who is coming back, who has stopped coming,
   who to message.
   *"nionyeshe wateja wangu", "who are my best customers?",

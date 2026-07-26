@@ -233,12 +233,18 @@ async function dispatch(
       console.log(`[router] conversational: ${JSON.stringify(body)}`);
       try {
         const { askClaude } = await import("../core/claude-client");
-        const reply = await askClaude("converse", body + langDirective(lang), {
-          maxTokens: 300,
-        });
+        const { buildLedgerContext } = await import("./ledger-context");
+        // Hand it her actual books. Without them it can only produce the
+        // generic "try one of these commands" reply, which is what makes a
+        // bot feel like a menu instead of an assistant.
+        const reply = await askClaude(
+          "duka-assistant",
+          `LEDGER:\n${buildLedgerContext()}\n\nHER MESSAGE:\n${body}${langDirective(lang)}`,
+          { maxTokens: 500 }
+        );
         return reply.trim() || replies.unknown(lang);
       } catch (err) {
-        console.error("[router] converse failed:", err);
+        console.error("[router] assistant failed:", err);
         return replies.unknown(lang);
       }
 
@@ -280,7 +286,28 @@ async function dispatch(
     case "day_close":
       return pillarCall("Kufunga siku", lang, async () => {
         const reportedTotal = extractReportedTotal(body);
-        if (reportedTotal === null) return replies.askDayTotal(lang);
+        if (reportedTotal === null) {
+          // She named no figure, so she is asking rather than closing —
+          // "leo nimetengeneza pesa ngapi". Answer with what is logged, then
+          // invite the close. Asking her back for a number she just asked us
+          // for is the one reply guaranteed to feel broken.
+          const db = (await import("../core/db")).default;
+          const row = db
+            .prepare(
+              `SELECT COALESCE(SUM(amount), 0) AS total, COUNT(*) AS n
+                 FROM transactions
+                WHERE type = 'sale'
+                  AND date(created_at, '+3 hours') = date('now', '+3 hours')`
+            )
+            .get() as { total: number; n: number };
+
+          if (row.n === 0) return replies.askDayTotal(lang);
+
+          const kes = `Ksh ${Math.round(row.total).toLocaleString("en-KE")}`;
+          return lang === "sw"
+            ? `Leo umeandika mauzo ${row.n} — jumla ${kes}.\nUkitaka kufunga siku, niambie jumla uliyohesabu, mfano: "funga leo ${Math.round(row.total)}".`
+            : `You have logged ${row.n} sales today — ${kes} in total.\nTo close the day, tell me the total you counted, e.g. "funga leo ${Math.round(row.total)}".`;
+        }
 
         const { reconcileToday } = await import(
           "../pillar1-reconciliation/reconcile"

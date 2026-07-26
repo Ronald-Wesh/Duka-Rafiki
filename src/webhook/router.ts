@@ -3,6 +3,7 @@ import { config } from "../core/config";
 import { sendWhatsapp } from "./whatsapp-client";
 import { handleIncomingMessage } from "./handle-message";
 import testUiRouter from "./test-ui";
+import { validateRequest } from "twilio";
 
 const router = Router();
 
@@ -106,6 +107,52 @@ async function handleWebhookPayload(payload: unknown): Promise<void> {
     console.error(`[webhook] failed to send reply to ${from}:`, err);
   }
 }
+
+// ------------------------------------------------------- Twilio sandbox path
+// TEMPORARY, UNCOMMITTED: fallback transport while Meta business verification
+// is pending. Twilio posts a flat form body and accepts TwiML back, so the
+// reply rides the same HTTP response — no outbound call, no Twilio creds.
+// Delete this block once the Meta webhook verifies.
+router.post("/twilio-webhook", async (req: Request, res: Response) => {
+  // The tunnel is public and these handlers write to the ledger and spend
+  // Claude tokens, so verify Twilio's signature before trusting the body.
+  // TWILIO_SKIP_SIGNATURE=1 disables that for a demo run — opt-in, never default.
+  if (process.env.TWILIO_SKIP_SIGNATURE === "1") {
+    console.warn("[twilio] SIGNATURE CHECK DISABLED — endpoint is unauthenticated");
+  } else {
+    const authToken = process.env.TWILIO_AUTH_TOKEN ?? "";
+    const url = `https://${req.get("host")}${req.originalUrl}`;
+    if (!authToken || !validateRequest(authToken, req.header("X-Twilio-Signature") ?? "", url, req.body ?? {})) {
+      console.warn(`[twilio] REJECTED: bad or unverifiable signature for ${url}`);
+      res.sendStatus(403);
+      return;
+    }
+  }
+
+  const from = String(req.body?.From ?? "unknown");
+  const body = String(req.body?.Body ?? "");
+  console.log(`[twilio] inbound from=${from} body=${JSON.stringify(body)}`);
+
+  let reply: string;
+  try {
+    const r = await handleIncomingMessage({
+      from,
+      name: String(req.body?.ProfileName ?? "") || null,
+      body,
+      timestamp: "",
+      type: "text",
+    });
+    reply = r.replyText;
+  } catch (err) {
+    console.error("[twilio] handling failed:", err);
+    reply = "Samahani, kuna hitilafu. Jaribu tena.";
+  }
+
+  const escaped = reply.replace(/[<>&]/g, (c) =>
+    c === "<" ? "&lt;" : c === ">" ? "&gt;" : "&amp;"
+  );
+  res.type("text/xml").send(`<Response><Message>${escaped}</Message></Response>`);
+});
 
 // Local test UI (GET /test, POST /test/message). Mounted here so index.ts
 // needs no change — it already mounts this router.
