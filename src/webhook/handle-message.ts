@@ -55,6 +55,23 @@ export async function handleIncomingMessage(
   return { replyText: await dispatch(intent, body) };
 }
 
+/**
+ * Pull the owner's stated day-close total out of "funga leo 3500".
+ *
+ * Deterministic on purpose: this figure is one side of the reconciliation, so
+ * it must be read from what she typed, never inferred. Takes the largest number
+ * in the message — "funga leo 3500" has one, and in "jumla ya leo ni 4,200" the
+ * amount is still the only real figure. Returns null if there is no number.
+ */
+function extractReportedTotal(text: string): number | null {
+  const matches = text.match(/\d[\d,]*(?:\.\d{1,2})?/g);
+  if (!matches) return null;
+  const amounts = matches
+    .map((m) => Number(m.replace(/,/g, "")))
+    .filter((n) => Number.isFinite(n) && n > 0);
+  return amounts.length ? Math.max(...amounts) : null;
+}
+
 async function dispatch(intent: Intent, body: string): Promise<string> {
   switch (intent) {
     case "help":
@@ -97,16 +114,30 @@ async function dispatch(intent: Intent, body: string): Promise<string> {
 
     case "day_close":
       return pillarCall("Kufunga siku", async () => {
-        const { reconcileDay } = await import(
+        const reportedTotal = extractReportedTotal(body);
+        if (reportedTotal === null) {
+          return "Umefunga siku? Niambie jumla uliyopata, mfano: \"funga leo 3500\".";
+        }
+
+        const { reconcileToday } = await import(
           "../pillar1-reconciliation/reconcile"
         );
-        const today = new Date().toISOString().slice(0, 10);
-        const result = reconcileDay(today);
+        const r = reconcileToday(reportedTotal);
+
+        // Every figure here comes from P1's deterministic arithmetic — the model
+        // is not involved in the close.
+        const verdict =
+          r.variance === 0
+            ? "Imelingana ✅"
+            : r.variance > 0
+              ? `Umesema zaidi kwa Ksh ${Math.abs(r.variance)}`
+              : `Umesema pungufu kwa Ksh ${Math.abs(r.variance)}`;
+
         return [
-          `Kufunga siku ${result.date}:`,
-          `Zilizoandikwa: Ksh ${result.expected_total}`,
-          `Umesema: Ksh ${result.reported_total}`,
-          `Tofauti: Ksh ${result.variance}`,
+          `Kufunga siku ${r.date}:`,
+          `Zilizoandikwa: Ksh ${r.expected_total}`,
+          `Umesema: Ksh ${r.reported_total}`,
+          verdict,
         ].join("\n");
       });
 

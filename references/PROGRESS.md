@@ -1,7 +1,7 @@
 # P0 Progress Log
 
 Last updated: 2026-07-26
-Current status (one line): **platform-infra merged to main, and a local test UI at `/test` means no pillar is blocked on Meta delivery tonight**; tunnel live, prompts 7/7 against the real API; only the real phone-to-bot round trip still needs Meta's recipient allowlist
+Current status (one line): **all four pillars run end to end** — P1 merged, so M-Pesa SMS / cash sale / deni / day-close now parse with Claude and persist; verified live via the `/test` UI, which needs no Meta or ngrok
 
 ## Done
 
@@ -55,6 +55,21 @@ Current status (one line): **platform-infra merged to main, and a local test UI 
 - **All**: seed data is ready — run `npm run db:reset && npm run check:seed` and sanity-check your pillar against it.
 
 ## Gotchas / decisions made
+
+- ### ✅ ALL FOUR PILLARS NOW RUN END TO END — P1 merged 2026-07-26
+  P1's work existed on `pillar1-reconciliation` but had never been merged. Merged rather than rewritten. Verified live through `/test` with real Claude calls **and** confirmed in the DB:
+  | Message | Reply | Persisted |
+  |---|---|---|
+  | Real-format M-Pesa SMS | `Nimeandika: Ksh 750 kutoka Esther Nduta ✅` | sale 750 `mpesa_buygoods` `confirmed=1`, **upserted** onto the existing seed customer (no duplicate) |
+  | `unga 2kg 180 cash` | `Nimeandika: Ksh 180 ✅` | sale 180 cash `confirmed=0` |
+  | `Mary amechukua sukari 200 deni` | `Deni imeandikwa: Ksh 200 ✅` | deni 200 `confirmed=0` |
+  | `funga leo 3500` | expected 2015 / reported 3500 / +1485 | `daily_reconciliations` row written |
+
+  **Conflict resolution (4 files).** Kept **ours** for `router.ts`, `whatsapp-client.ts` and both parse prompts; took **theirs** for the three pillar parsers.
+  - P1's branch predates the Meta rewrite, so their `router.ts` was the old Twilio-era file with inline intent heuristics, and their `whatsapp-client.ts` was still Twilio. Both superseded.
+  - Their prompts were never run against the live API; ours are 7/7 verified — and their parser code reads `{amount, payer_name, till, timestamp}` with nullables, which is exactly what ours returns, so keeping ours is safe. Their `parse-transaction.ts` also tolerates the extra fields ours emits.
+  - **The day-close gap is finally closed.** P1 shipped `reconcileDay(date, reportedTotal)` + `reconcileToday(reportedTotal)`, so the owner's stated total now has somewhere to go. `handle-message.ts` extracts it deterministically (largest number in the message) and asks for it if absent — that figure is one side of the reconciliation and must never be inferred.
+  - **Contract agreement, unplanned but lucky:** P1's `expected_total` counts `sale + deni_repayment` and excludes `deni`/`restock` — the same definition the seed data uses. That was the open question flagged below; it resolved in agreement, so seeded variances remain meaningful. One caveat: the seed's expected totals include unconfirmed rows, whereas `reconcileDay` excludes `confirmed=0`. Historical seeded rows therefore won't exactly match a recomputation — live behaviour is unaffected.
 
 - ### ✅ TEST YOUR PILLAR WITHOUT WHATSAPP: `http://localhost:3000/test`
   **Meta delivery is not required to work on your pillar tonight.** Run `npm run dev` and open that URL — a fake WhatsApp chat in the browser. Type a message (or click a sample: cash sale, deni, day close, regulars, statement, a real-format M-Pesa SMS) and the bot's reply appears as a bubble. No Meta, no ngrok, no handset, no Graph API.
