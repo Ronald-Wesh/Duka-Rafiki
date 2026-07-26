@@ -39,7 +39,11 @@ export function mediaFromBody(body: Record<string, unknown>): Array<{ url: strin
  * attached. Compare parsed `hostname`, never the raw string: a startsWith test
  * is defeated by `https://api.twilio.com@evil.com/`.
  */
-const TWILIO_HOSTS = /^(api\.twilio\.com|media\.twiliocdn\.com|mcs\.[a-z0-9-]+\.twilio\.com)$/;
+// Twilio serves media off several CDN subdomains — mms., media., and region
+// variants — so match the twiliocdn.com apex rather than naming each one.
+// Still an exact-suffix test on the parsed hostname, not a substring search.
+const TWILIO_HOSTS =
+  /^(api\.twilio\.com|[a-z0-9-]+\.twiliocdn\.com|mcs\.[a-z0-9-]+\.twilio\.com)$/;
 
 function isTwilioHost(raw: string): boolean {
   try {
