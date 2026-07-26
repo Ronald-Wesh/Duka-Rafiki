@@ -119,6 +119,8 @@ inspectable (a requirement, not a preference — "explainable record" is core to
   shareable HTML page if PDF eats too much time. A pre-designed template populated
   with confirmed numbers is acceptable and looks identical on stage.
 - **Hosting for demo**: ngrok (or similar) tunnel for the webhook. No production deploy.
+- **Local testing**: For local testing without WhatsApp/Meta, visit `http://localhost:PORT/test`
+  in a browser — bypasses ngrok and Meta entirely.
 
 ## 7. Repo structure (build inside these folders; don't restructure without discussion)
 

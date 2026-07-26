@@ -1,7 +1,7 @@
 # P0 Progress Log
 
 Last updated: 2026-07-26
-Current status (one line): **tunnel live and the full chain verified end to end** (health, Meta handshake, POST routing, P3 statement page — all over the public URL); prompts 7/7 against the real API; only the real phone-to-bot round trip remains, which needs the demo handset on Meta's recipient allowlist
+Current status (one line): **platform-infra merged to main, and a local test UI at `/test` means no pillar is blocked on Meta delivery tonight**; tunnel live, prompts 7/7 against the real API; only the real phone-to-bot round trip still needs Meta's recipient allowlist
 
 ## Done
 
@@ -55,6 +55,15 @@ Current status (one line): **tunnel live and the full chain verified end to end*
 - **All**: seed data is ready — run `npm run db:reset && npm run check:seed` and sanity-check your pillar against it.
 
 ## Gotchas / decisions made
+
+- ### ✅ TEST YOUR PILLAR WITHOUT WHATSAPP: `http://localhost:3000/test`
+  **Meta delivery is not required to work on your pillar tonight.** Run `npm run dev` and open that URL — a fake WhatsApp chat in the browser. Type a message (or click a sample: cash sale, deni, day close, regulars, statement, a real-format M-Pesa SMS) and the bot's reply appears as a bubble. No Meta, no ngrok, no handset, no Graph API.
+  - **It calls the exact same code path as a real message.** Both the Meta webhook and the test page call `handleIncomingMessage()` in `src/webhook/handle-message.ts` — there is no second implementation to drift. If it works at `/test`, it works on WhatsApp.
+  - `POST /test/message` takes `{from, name, body}` and returns `{replyText}`. Handy for curl/scripted checks too.
+  - The sender-name field (default *Mama Njeri (test)*) is there so name-based deni logic can be exercised.
+  - **It never sends anything outbound** — the reply comes back in the HTTP response, so `whatsapp-client.ts` is untouched and no message can reach a real number. This is the safe way to test with live credentials.
+  - Detected intent is logged to the server console (`[router] … intent=… (reason)`), so a misroute is visible while you test.
+  - **Refactor note for pillar owners:** routing/dispatch moved out of `router.ts` into `handle-message.ts`. `router.ts` is now Meta transport only. If you previously imported `routeMessage` from `router.ts`, import `handleIncomingMessage` from `handle-message.ts` instead — it takes `{from, name, body, timestamp, type}` and returns `{replyText}`.
 
 - ### Meta verification failure (2026-07-26) — root cause was the TUNNEL, not the handler
   Symptom: "The callback URL or verify token couldn't be validated" on **Verify and Save**.
