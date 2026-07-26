@@ -74,8 +74,10 @@ check("extractJson handles fences, prose and bare JSON", () => {
 check("no scoring vocabulary on the product surface", () => {
   const BANNED = /credit\s*score|creditworth|\bscore\b|\brating\b|risk\s*level/i;
   // These name the words in order to forbid or assert against them.
+  // Adding a prompt that prohibits scoring language? Add its filename here too.
   const EXEMPT = [
     "phrase-summary.md",
+    "statement-summary.md", // P3's statement prompt — forbids the same words
     "check-prompts.ts",
     "check-prompts-live.ts",
     "README.md",
