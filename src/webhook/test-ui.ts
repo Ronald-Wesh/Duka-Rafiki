@@ -24,14 +24,16 @@ router.post("/test/message", async (req: Request, res: Response) => {
   const body = String(req.body?.body ?? "");
 
   try {
-    const { replyText } = await handleIncomingMessage({
+    // Pass the whole result through: intent / lang / usedClaude let the console
+    // show a misroute or a wrong reply language without tailing server logs.
+    const result = await handleIncomingMessage({
       from,
       name,
       body,
       timestamp: String(Math.floor(Date.now() / 1000)),
       type: "text",
     });
-    res.json({ replyText });
+    res.json(result);
   } catch (err) {
     // The real webhook swallows errors; here we surface them, because the whole
     // point of this page is diagnosing pillar logic.

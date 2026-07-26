@@ -120,7 +120,11 @@ inspectable (a requirement, not a preference — "explainable record" is core to
   with confirmed numbers is acceptable and looks identical on stage.
 - **Hosting for demo**: ngrok (or similar) tunnel for the webhook. No production deploy.
 - **Local testing**: For local testing without WhatsApp/Meta, visit `http://localhost:PORT/test`
-  in a browser — bypasses ngrok and Meta entirely.
+  in a browser — bypasses ngrok and Meta entirely. For the nicer Next.js console,
+  run `npm run dev` (bot, port 3000) and `npm run dev:web` (UI, port 3001), then open
+  `http://localhost:3001`.
+- **Language**: the bot detects English vs Swahili per message and replies in the same
+  language — write either.
 
 ## 7. Repo structure (build inside these folders; don't restructure without discussion)
 

@@ -56,6 +56,21 @@ Current status (one line): **all four pillars run end to end** — P1 merged, so
 
 ## Gotchas / decisions made
 
+- ### 🌍 Bilingual replies + Next.js test console (2026-07-26)
+  **Two ways to test, both with zero Meta/ngrok dependency:**
+  - `http://localhost:3000/test` — the plain inline page (no build step)
+  - `http://localhost:3001` — the Next.js console: `npm run dev` (bot) + `npm run dev:web` (UI). Nicer, shows per-reply badges for **Claude / language / intent / latency**, and bilingual sample chips.
+
+  The Next app is a **thin client only** — it proxies through its own `/api/message` route to the Express bot's `/test/message`. That avoids CORS, keeps `better-sqlite3` (a native module Next's bundler handles badly) out of the UI, and means there is no second copy of any bot logic.
+
+  **Language detection** (`src/webhook/language.ts`) is deterministic keyword weighting, same rationale as intent classification: instant and debuggable, and a wrong guess is cosmetic rather than ledger-corrupting. Ties resolve to Swahili — `unga 2kg 180 cash` is Sheng with an English loanword, not an English sentence. Guarded by `npm run check:lang` (17 cases).
+
+  **Coverage is partial and worth knowing:**
+  - ✅ Fully bilingual: help, unknown, errors, sale / deni / M-Pesa acknowledgements, day-close.
+  - ⚠️ **P2's regulars summary stays Sheng-flavoured even in English mode.** The owner's language is appended to the prompt *input* (rather than editing P2's prompt file, which is theirs), but their prompt explicitly mandates Nairobi code-switching, so it wins. Truly-English output needs a language variable in `regulars-summary.md` — **P2's call**. Safe either way: if the model mangles a figure while switching language, P2's verification rejects it and the deterministic text is returned.
+  - ⚠️ **P3's statement summary has no language parameter at all** — `generateStatement()` takes none, so it is always English. P3's call.
+- **`npm run check` is currently 56 pass / 1 fail** — the scoring-vocabulary guard flags the `score()` helper in `language.ts`. It is a false positive (language-detection weighting, not credit scoring). Fix is a one-word rename to `weigh()`; left undone pending a decision, since exempting the file would blunt a guard that has already caught three real cases.
+
 - ### ✅ ALL FOUR PILLARS NOW RUN END TO END — P1 merged 2026-07-26
   P1's work existed on `pillar1-reconciliation` but had never been merged. Merged rather than rewritten. Verified live through `/test` with real Claude calls **and** confirmed in the DB:
   | Message | Reply | Persisted |

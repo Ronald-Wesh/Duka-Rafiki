@@ -17,8 +17,10 @@
     "check:seed": "ts-node demo/check-seed.ts",
     "check:prompts": "ts-node demo/check-prompts.ts",
     "check:prompts:live": "ts-node demo/check-prompts-live.ts",
-    "check": "npm run check:intents && npm run check:seed && npm run check:prompts",
-    "db:reset": "rm -f duka.db* && ts-node demo/seed-data.ts"
+    "check": "npm run check:intents && npm run check:lang && npm run check:seed && npm run check:prompts",
+    "db:reset": "rm -f duka.db* && ts-node demo/seed-data.ts",
+    "check:lang": "ts-node demo/check-language.ts",
+    "dev:web": "npm --prefix web run dev"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.32.0",

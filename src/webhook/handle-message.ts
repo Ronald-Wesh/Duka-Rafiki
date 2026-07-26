@@ -1,5 +1,6 @@
 import { classifyIntent, Intent } from "./intent";
 import { replies } from "./replies";
+import { detectLanguage, Lang } from "./language";
 // Type-only: erased at compile time, so importing P2 here costs nothing at runtime.
 import type {
   Customer as P2Customer,
@@ -31,12 +32,19 @@ export interface IncomingMessage {
 
 export interface HandleResult {
   replyText: string;
+  /** Which intent fired — surfaced so the test UI can show misroutes. */
+  intent?: Intent;
+  /** Language the reply was written in. */
+  lang?: Lang;
+  /** True when this path called the Anthropic API. */
+  usedClaude?: boolean;
 }
 
 export async function handleIncomingMessage(
   message: IncomingMessage
 ): Promise<HandleResult> {
   const { from, body, type = "text" } = message;
+  const lang = detectLanguage(body);
 
   // Voice notes and images arrive as their own message types with no text body.
   // Not wired up yet — needs a media download + transcription step.
@@ -44,16 +52,45 @@ export async function handleIncomingMessage(
     console.log(`[router] non-text message from=${from} type=${type}`);
     return {
       replyText: replies.notReady(
-        type === "audio" ? "Voice note" : `Message ya aina '${type}'`
+        lang,
+        type === "audio"
+          ? lang === "en"
+            ? "Voice notes"
+            : "Voice note"
+          : `${type}`
       ),
+      lang,
+      usedClaude: false,
     };
   }
 
   const { intent, reason } = classifyIntent(body);
-  console.log(`[router] from=${from} intent=${intent} (${reason})`);
+  console.log(`[router] from=${from} lang=${lang} intent=${intent} (${reason})`);
 
-  return { replyText: await dispatch(intent, body) };
+  const replyText = await dispatch(intent, body, lang);
+  return { replyText, intent, lang, usedClaude: CLAUDE_INTENTS.has(intent) };
 }
+
+/**
+ * Language instruction appended to a pillar's prompt input.
+ *
+ * Pillar prompts are written Swahili-first. Rather than editing files another
+ * pillar owns, the owner's detected language is passed alongside the facts.
+ */
+function langDirective(lang: Lang): string {
+  return lang === "en"
+    ? "\n\nWrite your reply in English."
+    : "\n\nAndika jibu lako kwa Kiswahili.";
+}
+
+/** Intents whose handlers call the Anthropic API. */
+const CLAUDE_INTENTS = new Set<Intent>([
+  "mpesa_sms",
+  "sale",
+  "deni",
+  "regulars",
+  "report",
+]);
 
 /**
  * Pull the owner's stated day-close total out of "funga leo 3500".
@@ -72,77 +109,66 @@ function extractReportedTotal(text: string): number | null {
   return amounts.length ? Math.max(...amounts) : null;
 }
 
-async function dispatch(intent: Intent, body: string): Promise<string> {
+async function dispatch(
+  intent: Intent,
+  body: string,
+  lang: Lang
+): Promise<string> {
   switch (intent) {
     case "help":
-      return replies.help;
+      return replies.help(lang);
 
     case "unknown":
       // Logged in full so a misroute can be diagnosed from the demo transcript.
       console.log(`[router] unrouted: ${JSON.stringify(body)}`);
-      return replies.unknown;
+      return replies.unknown(lang);
 
     // Everything below belongs to a pillar. Each is called through
     // pillarCall() so a not-yet-implemented handler degrades to an honest
     // message instead of throwing into the void.
     case "mpesa_sms":
-      return pillarCall("M-Pesa SMS", async () => {
+      return pillarCall("M-Pesa SMS", lang, async () => {
         const { parseMpesaSms } = await import(
           "../pillar1-reconciliation/parse-mpesa-sms"
         );
         const parsed = await parseMpesaSms(body);
-        return `Nimeandika: Ksh ${parsed.amount} kutoka ${parsed.payer_name} ✅`;
+        return replies.mpesaLogged(lang, parsed.amount, parsed.payer_name);
       });
 
     case "sale":
-      return pillarCall("Mauzo ya cash", async () => {
+      return pillarCall("Mauzo ya cash", lang, async () => {
         const { parseTransaction } = await import(
           "../pillar1-reconciliation/parse-transaction"
         );
         const txn = await parseTransaction(body);
-        return `Nimeandika: Ksh ${txn.amount} ✅`;
+        return replies.saleLogged(lang, Number(txn.amount ?? 0));
       });
 
     case "deni":
-      return pillarCall("Deni", async () => {
+      return pillarCall("Deni", lang, async () => {
         const { parseTransaction } = await import(
           "../pillar1-reconciliation/parse-transaction"
         );
         const txn = await parseTransaction(body);
-        return `Deni imeandikwa: Ksh ${txn.amount} ✅`;
+        return replies.deniLogged(lang, Number(txn.amount ?? 0));
       });
 
     case "day_close":
-      return pillarCall("Kufunga siku", async () => {
+      return pillarCall("Kufunga siku", lang, async () => {
         const reportedTotal = extractReportedTotal(body);
-        if (reportedTotal === null) {
-          return "Umefunga siku? Niambie jumla uliyopata, mfano: \"funga leo 3500\".";
-        }
+        if (reportedTotal === null) return replies.askDayTotal(lang);
 
         const { reconcileToday } = await import(
           "../pillar1-reconciliation/reconcile"
         );
         const r = reconcileToday(reportedTotal);
-
         // Every figure here comes from P1's deterministic arithmetic — the model
         // is not involved in the close.
-        const verdict =
-          r.variance === 0
-            ? "Imelingana ✅"
-            : r.variance > 0
-              ? `Umesema zaidi kwa Ksh ${Math.abs(r.variance)}`
-              : `Umesema pungufu kwa Ksh ${Math.abs(r.variance)}`;
-
-        return [
-          `Kufunga siku ${r.date}:`,
-          `Zilizoandikwa: Ksh ${r.expected_total}`,
-          `Umesema: Ksh ${r.reported_total}`,
-          verdict,
-        ].join("\n");
+        return replies.dayClose(lang, r);
       });
 
     case "regulars":
-      return pillarCall("Orodha ya wateja", async () => {
+      return pillarCall("Orodha ya wateja", lang, async () => {
         const { buildRegularsSummary } = await import(
           "../pillar2-retention/repeat-detection"
         );
@@ -168,16 +194,23 @@ async function dispatch(intent: Intent, body: string): Promise<string> {
 
         // draftRegularsSummary falls back to deterministic text if the model
         // drops or alters a figure, so it never throws and never invents one.
+        //
+        // The language directive is appended to the INPUT rather than editing
+        // P2's prompt file (theirs to own). If the model mangles a figure while
+        // switching language, their verification rejects it and the
+        // deterministic text is returned — so this can degrade, never corrupt.
         const { text } = await draftRegularsSummary(
           summary,
           (promptName, promptInput, maxTokens) =>
-            askClaude(promptName, promptInput, { maxTokens })
+            askClaude(promptName, promptInput + langDirective(lang), {
+              maxTokens,
+            })
         );
         return text;
       });
 
     case "report":
-      return pillarCall("Ripoti", async () => {
+      return pillarCall("Ripoti", lang, async () => {
         const { generateStatement } = await import("../pillar3-statement");
         // Defaults to the trailing 28 days — a one-day period is not a record.
         const { url, summary } = await generateStatement();
@@ -194,6 +227,7 @@ async function dispatch(intent: Intent, body: string): Promise<string> {
  */
 async function pillarCall(
   label: string,
+  lang: Lang,
   fn: () => Promise<string>
 ): Promise<string> {
   try {
@@ -202,9 +236,9 @@ async function pillarCall(
     const message = err instanceof Error ? err.message : String(err);
     if (/not implemented/i.test(message)) {
       console.log(`[router] ${label}: pillar handler not implemented yet`);
-      return replies.notReady(label);
+      return replies.notReady(lang, label);
     }
     console.error(`[router] ${label} failed:`, err);
-    return replies.failed;
+    return replies.failed(lang);
   }
 }
