@@ -33,7 +33,7 @@ export interface IncomingMessage {
 export interface HandleResult {
   replyText: string;
   /** Which intent fired — surfaced so the test UI can show misroutes. */
-  intent?: Intent;
+  intent?: RoutedIntent;
   /** Language the reply was written in. */
   lang?: Lang;
   /** True when this path called the Anthropic API. */
@@ -64,11 +64,85 @@ export async function handleIncomingMessage(
     };
   }
 
-  const { intent, reason } = classifyIntent(body);
-  console.log(`[router] from=${from} lang=${lang} intent=${intent} (${reason})`);
+  const guess = classifyIntent(body);
+  let intent: RoutedIntent = guess.intent;
+  let how = `keywords: ${guess.reason}`;
+  let modelRouted = false;
+  let replyLang = lang;
 
-  const replyText = await dispatch(intent, body, lang);
-  return { replyText, intent, lang, usedClaude: CLAUDE_INTENTS.has(intent) };
+  // Keywords only get the final say when they are sure. Everything else goes to
+  // Claude, so the bot understands what she meant rather than requiring her to
+  // phrase it in a way the regexes happen to recognise.
+  if (!guess.confident) {
+    const decided = await classifyWithClaude(body);
+    if (decided) {
+      intent = decided.intent;
+      how = `claude: ${decided.reason}`;
+      modelRouted = true;
+      // The model read the whole sentence; trust it over keyword weighting,
+      // which has no markers for e.g. "anyone I haven't seen lately?".
+      if (decided.lang) replyLang = decided.lang;
+    }
+  }
+
+  console.log(`[router] from=${from} lang=${replyLang} intent=${intent} (${how})`);
+
+  const replyText = await dispatch(intent, body, replyLang);
+  return {
+    replyText,
+    intent,
+    lang: replyLang,
+    usedClaude: modelRouted || CLAUDE_INTENTS.has(intent),
+  };
+}
+
+/** Read-only debt question — answered from the ledger, writes nothing. */
+export type RoutedIntent = Intent | "deni_query";
+
+/** Intents the classifier prompt may return, plus `other` for conversation. */
+type ClassifiedIntent = RoutedIntent | "other";
+
+/**
+ * Ask Claude what she wants. Returns null on any failure so the keyword guess
+ * stands — a slow or unavailable model must never cost her the message.
+ */
+async function classifyWithClaude(
+  body: string
+): Promise<{ intent: RoutedIntent; reason: string; lang?: Lang } | null> {
+  try {
+    const { askClaudeJson } = await import("../core/claude-client");
+    const out = await askClaudeJson<{
+      intent?: string;
+      reason?: string;
+      lang?: string;
+    }>(
+      "classify-intent",
+      body,
+      { maxTokens: 200 }
+    );
+
+    const allowed: ClassifiedIntent[] = [
+      "sale",
+      "deni",
+      "deni_query",
+      "day_close",
+      "regulars",
+      "report",
+      "help",
+      "other",
+    ];
+    const picked = String(out?.intent ?? "") as ClassifiedIntent;
+    if (!allowed.includes(picked)) return null;
+
+    // `other` is real conversation, not a failure — route it to the chat path
+    // rather than the canned "sijaelewa".
+    const intent: RoutedIntent = picked === "other" ? "unknown" : picked;
+    const lang = out?.lang === "en" || out?.lang === "sw" ? out.lang : undefined;
+    return { intent, reason: out?.reason ?? picked, lang };
+  } catch (err) {
+    console.error("[router] intent classification failed, keeping keyword guess:", err);
+    return null;
+  }
 }
 
 /**
@@ -84,7 +158,7 @@ function langDirective(lang: Lang): string {
 }
 
 /** Intents whose handlers call the Anthropic API. */
-const CLAUDE_INTENTS = new Set<Intent>([
+const CLAUDE_INTENTS = new Set<RoutedIntent>([
   "mpesa_sms",
   "sale",
   "deni",
@@ -110,18 +184,63 @@ function extractReportedTotal(text: string): number | null {
 }
 
 async function dispatch(
-  intent: Intent,
+  intent: RoutedIntent,
   body: string,
   lang: Lang
 ): Promise<string> {
   switch (intent) {
+    // Read-only: answer from the ledger with deterministic arithmetic. Asking
+    // who owes money must never write a transaction.
+    case "deni_query":
+      return pillarCall("Deni", lang, async () => {
+        const { default: db } = await import("../core/db");
+        const rows = db
+          .prepare(
+            `SELECT c.name AS name, c.disambiguator AS tag,
+                    SUM(CASE t.type WHEN 'deni' THEN t.amount
+                                    WHEN 'deni_repayment' THEN -t.amount
+                                    ELSE 0 END) AS owed
+             FROM customers c JOIN transactions t ON t.customer_id = c.id
+             GROUP BY c.id HAVING owed > 0 ORDER BY owed DESC LIMIT 10`
+          )
+          .all() as Array<{ name: string; tag: string | null; owed: number }>;
+
+        if (rows.length === 0) {
+          return lang === "en"
+            ? "Nobody owes you anything right now ✅"
+            : "Hakuna mtu anayekudai kwa sasa ✅";
+        }
+
+        const total = rows.reduce((sum, r) => sum + r.owed, 0);
+        const lines = rows.map(
+          (r) => `• ${r.name}${r.tag ? ` (${r.tag})` : ""} — Ksh ${r.owed}`
+        );
+        return [
+          lang === "en" ? "Still owed to you:" : "Deni ambazo hujalipwa:",
+          ...lines,
+          "",
+          lang === "en" ? `Total: Ksh ${total}` : `Jumla: Ksh ${total}`,
+        ].join("\n");
+      });
+
     case "help":
       return replies.help(lang);
 
     case "unknown":
-      // Logged in full so a misroute can be diagnosed from the demo transcript.
-      console.log(`[router] unrouted: ${JSON.stringify(body)}`);
-      return replies.unknown(lang);
+      // Not a rejection — this is ordinary conversation. Claude answers in her
+      // language and points at what the ledger can actually do. Falls back to
+      // the canned line only if the model is unavailable.
+      console.log(`[router] conversational: ${JSON.stringify(body)}`);
+      try {
+        const { askClaude } = await import("../core/claude-client");
+        const reply = await askClaude("converse", body + langDirective(lang), {
+          maxTokens: 300,
+        });
+        return reply.trim() || replies.unknown(lang);
+      } catch (err) {
+        console.error("[router] converse failed:", err);
+        return replies.unknown(lang);
+      }
 
     // Everything below belongs to a pillar. Each is called through
     // pillarCall() so a not-yet-implemented handler degrades to an honest
@@ -141,7 +260,9 @@ async function dispatch(
           "../pillar1-reconciliation/parse-transaction"
         );
         const txn = await parseTransaction(body);
-        return replies.saleLogged(lang, Number(txn.amount ?? 0));
+        const amount = Number(txn.amount ?? 0);
+        if (!amount) return replies.needAmount(lang);
+        return replies.saleLogged(lang, amount);
       });
 
     case "deni":
@@ -150,7 +271,10 @@ async function dispatch(
           "../pillar1-reconciliation/parse-transaction"
         );
         const txn = await parseTransaction(body);
-        return replies.deniLogged(lang, Number(txn.amount ?? 0));
+        const amount = Number(txn.amount ?? 0);
+        // No figure means this was almost certainly a question, not a record.
+        if (!amount) return replies.needAmount(lang);
+        return replies.deniLogged(lang, amount);
       });
 
     case "day_close":

@@ -41,7 +41,9 @@ const EN: Array<[RegExp, number]> = [
   [/\b(flour|sugar|milk|bread|oil|soap|salt|eggs?|rice|tea|cash)\b/i, 1],
 ];
 
-function score(text: string, markers: Array<[RegExp, number]>): number {
+// Named `weigh`, not `score`: "score" is banned vocabulary in this product
+// (README §13) and the guard in check-prompts.ts rightly flags it on sight.
+function weigh(text: string, markers: Array<[RegExp, number]>): number {
   return markers.reduce((sum, [re, w]) => (re.test(text) ? sum + w : sum), 0);
 }
 
@@ -53,8 +55,8 @@ function score(text: string, markers: Array<[RegExp, number]>): number {
  * not an English sentence.
  */
 export function detectLanguage(text: string): Lang {
-  const sw = score(text, SW);
-  const en = score(text, EN);
+  const sw = weigh(text, SW);
+  const en = weigh(text, EN);
   if (en > sw) return "en";
   return "sw";
 }

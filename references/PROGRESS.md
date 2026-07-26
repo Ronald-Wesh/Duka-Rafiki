@@ -56,6 +56,25 @@ Current status (one line): **all four pillars run end to end** — P1 merged, so
 
 ## Gotchas / decisions made
 
+- ### 🧠 The bot now understands intent instead of matching commands (2026-07-26)
+  **This reverses an earlier P0 decision.** Routing was pure keyword matching, defended on the grounds that a model misroute on stage is unrecoverable. That reasoning was right about *one* case and wrong as a general rule: it made the bot a command parser with a Swahili vocabulary list, and anything phrased differently got "sijaelewa". The point of using an agent is that she should not have to learn commands.
+
+  **Hybrid now:** keywords decide only when they are *confident*; everything else goes to Claude (`classify-intent.md`).
+  - `mpesa_sms` stays deterministic and is **never** delegated — a forwarded SMS misread as a manual entry writes a wrong row silently. Formulaic format, so keywords are both safer and faster.
+  - `deni` is confident **only with an amount**. "Mary amechukua sukari 200 deni" records; "who owes me money?" / "nani anadai?" hit the same keywords but are questions — that ambiguity is exactly what the model is for.
+  - A bare amount is no longer assumed to be a sale; it could be a day-close total or an answer to a question.
+  - Model failure returns null and the keyword guess stands, so a slow or down API never costs her the message.
+
+  **New `deni_query` intent** — read-only. Answers "who owes me?" from the ledger with deterministic SQL and writes nothing. Previously this errored, because the deni handler assumed every debt message was a new record.
+
+  **`unknown` is no longer a rejection.** It routes to `converse.md`, which answers naturally in her language and points at what the ledger can do. The prompt forbids stating any figure — it has no ledger access, so a plausible-sounding number would be invented. Falls back to the canned line only if the model is unavailable.
+
+  **Language now comes from the model when it routes.** Keyword weighting has no markers for "anyone I haven't seen lately?" and was answering it in Swahili. When Claude is already reading the sentence, it returns `lang` too.
+
+  Verified live: "nilipata elfu tano leo" → day_close · "who owes me money?" → deni_query with real balances totalling the seeded Ksh 873 · "can you send me something for the bank?" → report · "anyone I haven't seen lately?" → regulars in English · "asante sana" → a warm reply, not an error.
+
+  **Known limit:** `extractReportedTotal` reads digits only, so "elfu tano" (five thousand) is not understood as 5000 — the bot asks her to restate the figure rather than guessing. Safe, but a natural-language amount parser would be better.
+
 - ### 🌍 Bilingual replies + Next.js test console (2026-07-26)
   **Two ways to test, both with zero Meta/ngrok dependency:**
   - `http://localhost:3000/test` — the plain inline page (no build step)

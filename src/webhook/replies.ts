@@ -67,6 +67,12 @@ export const replies = {
       ? `Credit recorded: Ksh ${amount} ✅`
       : `Deni imeandikwa: Ksh ${amount} ✅`,
 
+  // The message named no figure, so nothing can be recorded from it.
+  needAmount: (l: Lang) =>
+    l === "en"
+      ? "I didn't catch an amount there. Tell me how much, e.g. \"Mary took sugar 200 on credit\"."
+      : "Sijapata kiasi hapo. Niambie ni ngapi, mfano: \"Mary amechukua sukari 200 deni\".",
+
   askDayTotal: (l: Lang) =>
     l === "en"
       ? "Closing the day? Tell me your total, e.g. \"close today 3500\"."
