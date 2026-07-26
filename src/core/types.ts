@@ -58,6 +58,39 @@ export interface Statement {
 export interface ParsedMpesaSms {
   amount: number;
   payer_name: string;
-  till: string;
+  /** Often absent in Pochi la Biashara messages. */
+  till: string | null;
+  /** ISO 8601 with the EAT offset, e.g. 2026-07-03T10:15:00+03:00 */
   timestamp: string;
+}
+
+/**
+ * Parsed shape from the owner's own free-text/voice entry
+ * (P1 parse-transaction.ts, prompt: parse-transaction.md).
+ *
+ * Deliberately NOT a Transaction: the model can't know customer IDs, so it
+ * returns a name and the caller resolves it against `customers`.
+ */
+export interface ParsedTransaction {
+  type: TransactionType;
+  amount: number;
+  channel: Channel;
+  /** Only meaningful for deni / deni_repayment; null for anonymous sales. */
+  customer_name: string | null;
+  /** e.g. "blue uniform", for two customers sharing a name. */
+  disambiguator: string | null;
+  /** Model wasn't confident — store as confirmed = 0, don't treat as verified. */
+  needs_review: boolean;
+}
+
+/**
+ * Parse prompts return this instead of guessing when input is unreadable or
+ * isn't a transaction at all. Check for it before trusting a parsed shape.
+ */
+export interface ParseError {
+  error: string;
+}
+
+export function isParseError(value: unknown): value is ParseError {
+  return typeof value === "object" && value !== null && "error" in value;
 }

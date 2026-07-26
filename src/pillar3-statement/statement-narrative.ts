@@ -45,7 +45,7 @@ export async function phraseSummary(b: StatementBreakdown): Promise<string> {
   };
 
   try {
-    const text = await askClaude("statement-summary", JSON.stringify(facts), 400);
+    const text = await askClaude("statement-summary", JSON.stringify(facts), { maxTokens: 400 });
     const clean = text.trim();
     if (clean.length === 0) return templateSummary(b);
     return clean;
