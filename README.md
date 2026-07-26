@@ -119,10 +119,12 @@ inspectable (a requirement, not a preference — "explainable record" is core to
   shareable HTML page if PDF eats too much time. A pre-designed template populated
   with confirmed numbers is acceptable and looks identical on stage.
 - **Hosting for demo**: ngrok (or similar) tunnel for the webhook. No production deploy.
-- **Local testing**: For local testing without WhatsApp/Meta, visit `http://localhost:PORT/test`
-  in a browser — bypasses ngrok and Meta entirely. For the nicer Next.js console,
-  run `npm run dev` (bot, port 3000) and `npm run dev:web` (UI, port 3001), then open
-  `http://localhost:3001`.
+- **Local testing**: `npm install && npm run dev` starts both the bot (:3000) and the
+  Next console (:3001) from one command — open `http://localhost:3001`. Bypasses ngrok
+  and Meta entirely. A no-build fallback page also lives at `http://localhost:3000/test`.
+- **Deploy**: `vercel.json` deploys the console only; the bot stays local because the
+  SQLite ledger needs a writable disk. Set `BOT_API_BASE` to your tunnel URL. See
+  `docs/deploy.md`.
 - **Language**: the bot detects English vs Swahili per message and replies in the same
   language — write either.
 

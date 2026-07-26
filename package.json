@@ -7,9 +7,9 @@
     "node": ">=20"
   },
   "scripts": {
-    "dev": "ts-node-dev --respawn src/index.ts",
-    "build": "tsc",
-    "start": "node dist/index.js",
+    "dev": "concurrently -n bot,web -c green,cyan -k \"ts-node-dev --respawn src/index.ts\" \"npm --prefix web run dev\"",
+    "build": "tsc && npm --prefix web run build",
+    "start": "concurrently -n bot,web -c green,cyan -k \"node dist/index.js\" \"npm --prefix web start\"",
     "seed": "ts-node demo/seed-data.ts",
     "seed:statement": "ts-node demo/seed-statement.ts",
     "test:p3": "ts-node src/pillar3-statement/statement-metrics.test.ts",
@@ -20,7 +20,9 @@
     "check": "npm run check:intents && npm run check:lang && npm run check:seed && npm run check:prompts",
     "db:reset": "rm -f duka.db* && ts-node demo/seed-data.ts",
     "check:lang": "ts-node demo/check-language.ts",
-    "dev:web": "npm --prefix web run dev"
+    "dev:web": "npm --prefix web run dev",
+    "postinstall": "npm --prefix web install",
+    "dev:bot": "ts-node-dev --respawn src/index.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.32.0",
@@ -35,7 +37,8 @@
     "@types/node": "^22.9.0",
     "ts-node": "^10.9.2",
     "ts-node-dev": "^2.0.0",
-    "typescript": "^5.6.3"
+    "typescript": "^5.6.3",
+    "concurrently": "^9.1.0"
   },
   "allowScripts": {
     "better-sqlite3@12.11.1": true

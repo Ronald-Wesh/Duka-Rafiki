@@ -56,6 +56,15 @@ Current status (one line): **all four pillars run end to end** — P1 merged, so
 
 ## Gotchas / decisions made
 
+- ### 📦 One command, and what can actually deploy (2026-07-26)
+  `npm install` now also installs `web/` (postinstall); `npm run dev`, `npm run build` and `npm start` each drive **both** the bot and the Next console via `concurrently`. No more two terminals. `dev:bot` / `dev:web` remain if you want them apart.
+
+  **Only the console deploys to Vercel, and that is not a config problem.** Every pillar reads *and writes* the SQLite ledger synchronously through `better-sqlite3`; Vercel's filesystem is read-only apart from `/tmp`, which is per-instance and wiped on cold start. A bot deployed there would silently lose sales. So `vercel.json` builds `web/` only and skips the root install — building `better-sqlite3` on Vercel would be a slow way to produce something unusable.
+
+  **Set `BOT_API_BASE`** in the Vercel project to the tunnel URL. `localhost` there means Vercel, not your machine, so without it every message returns "Can't reach the bot".
+
+  Hosting the bot itself later is blocked by the *synchronous* DB access, not by hosting: Turso/libSQL speaks the same dialect but is async, so every `db.prepare(...).all()` in P1, P2 and P3 becomes `await`. That is a cross-pillar refactor, not a deployment setting. Full writeup in `docs/deploy.md`.
+
 - ### 🧠 The bot now understands intent instead of matching commands (2026-07-26)
   **This reverses an earlier P0 decision.** Routing was pure keyword matching, defended on the grounds that a model misroute on stage is unrecoverable. That reasoning was right about *one* case and wrong as a general rule: it made the bot a command parser with a Swahili vocabulary list, and anything phrased differently got "sijaelewa". The point of using an agent is that she should not have to learn commands.
 
