@@ -17,6 +17,12 @@ export interface Classification {
   intent: Intent;
   /** Which rule fired — logged so misroutes are debuggable without a redeploy. */
   reason: string;
+  /**
+   * True when the keyword match is strong enough to act on without asking the
+   * model. False means "this is a guess" — the caller should let Claude decide,
+   * so the bot understands intent instead of only recognising commands.
+   */
+  confident: boolean;
 }
 
 // A Ksh figure in any of the shapes traders and M-Pesa actually use.
@@ -47,7 +53,7 @@ const HELP = /^\s*(help|msaada|hi|hello|hey|habari|niaje|sasa|mambo|start|menu)\
 export function classifyIntent(rawText: string): Classification {
   const text = rawText.trim();
 
-  if (!text) return { intent: "unknown", reason: "empty message" };
+  if (!text) return { intent: "unknown", reason: "empty message", confident: true };
 
   const hasAmount = AMOUNT.test(text);
 
@@ -55,30 +61,45 @@ export function classifyIntent(rawText: string): Classification {
   const markerHits = MPESA_MARKERS.filter((m) => m.test(text)).length;
   const hasTxnCode = MPESA_TXN_CODE.test(text);
   if (hasAmount && (hasTxnCode || markerHits >= 1)) {
+    // Deliberately never delegated to the model: an M-Pesa SMS misread as a
+    // manual entry writes a wrong row into the ledger silently. The format is
+    // formulaic, so keywords are both safer and faster here.
     return {
       intent: "mpesa_sms",
       reason: `mpesa: amount + ${markerHits} marker(s)${hasTxnCode ? " + txn code" : ""}`,
+      confident: true,
     };
   }
 
   // Explicit asks before anything amount-shaped, so "nataka report" doesn't
   // get read as a sale just because it happens to contain a number.
-  if (REPORT.test(text)) return { intent: "report", reason: "report keyword" };
-  if (REGULARS.test(text)) return { intent: "regulars", reason: "regulars keyword" };
+  if (REPORT.test(text)) return { intent: "report", reason: "report keyword", confident: true };
+  if (REGULARS.test(text)) return { intent: "regulars", reason: "regulars keyword", confident: true };
 
   if (DENI.test(text) || DENI_REPAYMENT.test(text)) {
-    return { intent: "deni", reason: "deni keyword" };
+    // Only a *record* is certain, and a record needs a figure. "who owes me
+    // money?" / "nani anadai?" hit the same keywords but are questions — let
+    // Claude separate recording a debt from asking about one.
+    return {
+      intent: "deni",
+      reason: hasAmount ? "deni keyword + amount" : "deni keyword, no amount",
+      confident: hasAmount,
+    };
   }
 
   // Day close needs both a closing word and a figure — "funga" alone is
   // ambiguous, and a bare number is far more likely to be a sale.
   if (DAY_CLOSE.test(text) && hasAmount) {
-    return { intent: "day_close", reason: "close keyword + amount" };
+    return { intent: "day_close", reason: "close keyword + amount", confident: true };
   }
 
-  if (HELP.test(text)) return { intent: "help", reason: "greeting/help" };
+  if (HELP.test(text)) return { intent: "help", reason: "greeting/help", confident: true };
 
-  if (hasAmount) return { intent: "sale", reason: "amount, no other signal" };
+  // An amount with no other signal is a plausible sale, but it could equally be
+  // a day-close total or an answer to a question — let the model settle it.
+  if (hasAmount) {
+    return { intent: "sale", reason: "amount, no other signal", confident: false };
+  }
 
-  return { intent: "unknown", reason: "no amount, no keyword" };
+  return { intent: "unknown", reason: "no amount, no keyword", confident: false };
 }

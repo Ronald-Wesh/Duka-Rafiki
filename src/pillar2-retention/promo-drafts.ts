@@ -50,7 +50,7 @@ export const PROMO_DRAFT_PROMPT = 'draft-promo';
 export type PromptRunner = (
   promptName: string,
   input: string,
-  maxTokens?: number,
+  opts?: { maxTokens?: number },
 ) => Promise<string>;
 
 // ---------------------------------------------------------------------------
@@ -292,7 +292,7 @@ export async function draftRegularsSummary(
 
   let phrased: string;
   try {
-    phrased = (await ask(REGULARS_SUMMARY_PROMPT, renderFactsBlock(summary), 500)).trim();
+    phrased = (await ask(REGULARS_SUMMARY_PROMPT, renderFactsBlock(summary), { maxTokens: 500 })).trim();
   } catch (error) {
     return {
       text: fallback,
@@ -357,7 +357,7 @@ export async function draftWinBackPromo(
   ].join('\n');
 
   try {
-    const phrased = (await ask(PROMO_DRAFT_PROMPT, input, 300)).trim();
+    const phrased = (await ask(PROMO_DRAFT_PROMPT, input, { maxTokens: 300 })).trim();
 
     // The promo intentionally carries no computed figures, so there is nothing to
     // verify beyond it being non-empty. Guard against a blank response.

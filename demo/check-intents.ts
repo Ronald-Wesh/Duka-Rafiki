@@ -44,12 +44,12 @@ const cases: Array<[string, Intent]> = [
 
 let failed = 0;
 for (const [input, expected] of cases) {
-  const { intent, reason } = classifyIntent(input);
+  const { intent, reason, confident } = classifyIntent(input);
   const ok = intent === expected;
   if (!ok) failed++;
   const preview = input.length > 58 ? input.slice(0, 55) + "..." : input || "(empty)";
   console.log(
-    `${ok ? "PASS" : "FAIL"}  ${preview.padEnd(60)} -> ${intent}${ok ? "" : ` (expected ${expected})`}  [${reason}]`
+    `${ok ? "PASS" : "FAIL"}  ${preview.padEnd(60)} -> ${intent}${ok ? "" : ` (expected ${expected})`}  [${reason}${confident ? "" : ", -> claude"}]`
   );
 }
 
