@@ -1,4 +1,4 @@
-# CLAUDE.md — Duka Ledger (WhatsApp Business Companion)
+ Duka Ledger (WhatsApp Business Companion)
 
 Shared instruction set for Claude Code across this repo. **Every team member has
 Claude Code read this file first in any session.** Keep it updated if scope changes
