@@ -1,0 +1,34 @@
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # The root postinstall also installs web/, so this covers both packages.
+      - run: npm ci
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Statement metrics tests
+        run: npm run test:p3
+
+      # `npm run check` is deliberately absent: those scripts call the Claude API
+      # and need ANTHROPIC_API_KEY. Add once the secret exists.
