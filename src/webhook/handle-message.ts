@@ -325,10 +325,8 @@ async function dispatch(
         // deterministic text is returned — so this can degrade, never corrupt.
         const { text } = await draftRegularsSummary(
           summary,
-          (promptName, promptInput, maxTokens) =>
-            askClaude(promptName, promptInput + langDirective(lang), {
-              maxTokens,
-            })
+          (promptName, promptInput, opts) =>
+            askClaude(promptName, promptInput + langDirective(lang), opts)
         );
         return text;
       });

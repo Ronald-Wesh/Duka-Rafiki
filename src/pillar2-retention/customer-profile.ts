@@ -12,8 +12,10 @@
  */
 
 import type {
+  CanonicalLedger,
   Channel,
   Customer,
+  CustomerMerge,
   CustomerProfile,
   DuplicateCandidate,
   Transaction,
@@ -95,6 +97,51 @@ export function daysBetweenDateKeys(fromKey: string, toKey: string): number {
   return Math.round((to - from) / 86_400_000);
 }
 
+/** Does this timestamp already state its offset? */
+const HAS_EXPLICIT_ZONE = /(?:Z|[+-]\d{2}:?\d{2})$/i;
+
+/**
+ * What a timestamp with no stated offset should be taken to mean.
+ *
+ * The `transactions.created_at` column currently receives three different
+ * serialisations, two of which are zone-less and mean different things:
+ *
+ * | Writer                        | Example                      | Naive? | Means |
+ * |-------------------------------|------------------------------|--------|-------|
+ * | P1 `parseMpesaSms`            | `2026-07-25T22:00:00`        | yes    | EAT   |
+ * | P1 `parseTransaction`         | `2026-07-25T19:00:00.000Z`   | no     | UTC   |
+ * | SQLite `CURRENT_TIMESTAMP`    | `2026-07-25 19:00:00`        | yes    | UTC   |
+ *
+ * P1's `parse-mpesa-sms.md` instructs Claude to "assume Africa/Nairobi" and its
+ * examples emit no suffix, so forwarded-SMS rows are naive **EAT** while seeded
+ * and cash rows are naive **UTC**. A bare string cannot be told apart, so this
+ * is a judgement the caller must make explicitly rather than something P2 can
+ * infer.
+ */
+export type NaiveTimestampZone = 'utc' | 'eat';
+
+/**
+ * Give a ledger timestamp an explicit offset so nothing downstream has to guess.
+ *
+ * Timestamps that already state a zone are returned untouched. This is applied
+ * once, at the read boundary (`queries.ts`), so the pure functions below only
+ * ever see unambiguous values — the ambiguity is resolved in exactly one place
+ * instead of being re-litigated per call site.
+ *
+ * The real fix is upstream and is one line: have `parse-mpesa-sms.md` emit
+ * `2026-07-25T22:00:00+03:00`. Once it does, every row carries its own offset
+ * and this function becomes a no-op regardless of which mode is passed.
+ */
+export function normalizeCreatedAt(
+  raw: string,
+  naiveZone: NaiveTimestampZone = 'utc',
+): string {
+  const trimmed = raw.trim();
+  if (HAS_EXPLICIT_ZONE.test(trimmed)) return trimmed;
+  const isoish = trimmed.replace(' ', 'T');
+  return naiveZone === 'eat' ? `${isoish}+03:00` : `${isoish}Z`;
+}
+
 // ---------------------------------------------------------------------------
 // Names
 // ---------------------------------------------------------------------------
@@ -172,6 +219,74 @@ export function findDuplicateCandidates(customers: readonly Customer[]): Duplica
     }
   }
   return candidates;
+}
+
+/**
+ * Collapse `customers` rows that are obviously the same person, at read time.
+ *
+ * P1 upserts customers on an **exact** `name` match, so the same human paying
+ * twice with differently-cased M-Pesa names — `MARY WANJIKU` then
+ * `Mary Wanjiku` — becomes two rows. That fragments the retention list this
+ * pillar exists to build, and on stage it reads as a bug: the owner sees her
+ * best customer listed twice with half her visits each.
+ *
+ * This does **not** write to the database. P1 is the only writer of `customers`
+ * (README §9); this remaps ids in an in-memory copy for presentation only, and
+ * every merge is reported in `merges` so nothing collapses silently. The durable
+ * fix belongs in P1's upsert — matching on a normalised name instead of an exact
+ * one — at which point this becomes a harmless no-op.
+ *
+ * Conservative on purpose: a row carrying a `disambiguator` is **never** merged.
+ * "Mary - blue uniform" and "Mary - shop next door" are two real people the
+ * owner deliberately separated, and overriding that would be worse than the
+ * duplicate. Only rows with no disambiguator at all are candidates.
+ */
+export function canonicalizeCustomers(
+  customers: readonly Customer[],
+  transactions: readonly Transaction[],
+): CanonicalLedger {
+  const groups = new Map<string, Customer[]>();
+  for (const customer of customers) {
+    const key = normalizeName(customer.name);
+    if (!key) continue; // unnamed rows are never merged
+    const group = groups.get(key);
+    if (group) group.push(customer);
+    else groups.set(key, [customer]);
+  }
+
+  const remap = new Map<number, number>();
+  const merges: CustomerMerge[] = [];
+
+  for (const group of groups.values()) {
+    // Only rows the owner has NOT deliberately distinguished.
+    const mergeable = group.filter((c) => !c.disambiguator?.trim());
+    if (mergeable.length < 2) continue;
+
+    const sorted = [...mergeable].sort((a, b) => a.id - b.id);
+    const canonical = sorted[0]; // earliest sighting wins the display name
+    const mergedIds = sorted.slice(1).map((c) => c.id);
+    for (const id of mergedIds) remap.set(id, canonical.id);
+
+    merges.push({
+      canonicalId: canonical.id,
+      mergedIds,
+      displayName: displayNameFor(canonical),
+    });
+  }
+
+  if (remap.size === 0) {
+    return { customers: [...customers], transactions: [...transactions], merges };
+  }
+
+  return {
+    customers: customers.filter((c) => !remap.has(c.id)),
+    transactions: transactions.map((txn) =>
+      txn.customer_id !== null && remap.has(txn.customer_id)
+        ? { ...txn, customer_id: remap.get(txn.customer_id)! }
+        : txn,
+    ),
+    merges,
+  };
 }
 
 // ---------------------------------------------------------------------------

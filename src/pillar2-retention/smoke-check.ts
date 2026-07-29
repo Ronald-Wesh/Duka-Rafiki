@@ -15,7 +15,9 @@
 
 import {
   buildCustomerProfiles,
+  canonicalizeCustomers,
   findDuplicateCandidates,
+  normalizeCreatedAt,
   normalizeName,
   toEatDateKey,
 } from './customer-profile';
@@ -139,6 +141,65 @@ eq('the pair is ids 1 and 2', [dupes[0]?.a.id, dupes[0]?.b.id], [1, 2]);
 eq('not flagged as deliberately disambiguated', dupes[0]?.disambiguated, false);
 
 // ---------------------------------------------------------------------------
+// 2b. Cross-pillar sync: timestamp conventions
+// ---------------------------------------------------------------------------
+
+console.log('\nRead-boundary timestamp normalisation (P1 writes three formats)');
+eq(
+  'naive read as UTC (SQLite CURRENT_TIMESTAMP)',
+  normalizeCreatedAt('2026-07-25 19:00:00', 'utc'),
+  '2026-07-25T19:00:00Z',
+);
+eq(
+  'naive read as EAT (P1 parse-mpesa-sms output)',
+  normalizeCreatedAt('2026-07-25T22:00:00', 'eat'),
+  '2026-07-25T22:00:00+03:00',
+);
+eq(
+  'an explicit Z is left alone',
+  normalizeCreatedAt('2026-07-25T19:00:00.000Z', 'eat'),
+  '2026-07-25T19:00:00.000Z',
+);
+eq(
+  'an explicit +03:00 is left alone',
+  normalizeCreatedAt('2026-07-25T22:00:00+03:00', 'utc'),
+  '2026-07-25T22:00:00+03:00',
+);
+// The bug this exists to prevent: a 22:00 EAT M-Pesa sale filed a day late.
+eq(
+  'naive EAT normalised to +03:00 lands on the correct EAT day',
+  toEatDateKey(normalizeCreatedAt('2026-07-25T22:00:00', 'eat')),
+  '2026-07-25',
+);
+eq(
+  'the same string read as UTC slips to the next day (why the option exists)',
+  toEatDateKey(normalizeCreatedAt('2026-07-25T22:00:00', 'utc')),
+  '2026-07-26',
+);
+
+// ---------------------------------------------------------------------------
+// 2c. Cross-pillar sync: P1 upserts customers on exact name
+// ---------------------------------------------------------------------------
+
+console.log('\nDuplicate-name canonicalisation (read-time, never written)');
+const canonical = canonicalizeCustomers(customers, transactions);
+eq('one merge performed', canonical.merges.length, 1);
+eq('id 2 folded into id 1 (earliest sighting wins)', canonical.merges[0]?.mergedIds, [2]);
+eq('canonical id is the lowest', canonical.merges[0]?.canonicalId, 1);
+eq('the merged row is dropped from customers', canonical.customers.some((c) => c.id === 2), false);
+eq('no transaction still points at the merged row', canonical.transactions.some((t) => t.customer_id === 2), false);
+eq('nothing was lost — same transaction count', canonical.transactions.length, transactions.length);
+
+// A customer the owner deliberately disambiguated must never be merged away.
+const withDisambiguator = [
+  ...customers,
+  { id: 5, name: 'Mary Wanjiku', phone: null, disambiguator: 'shop next door', first_seen: null, last_seen: null },
+];
+const guarded = canonicalizeCustomers(withDisambiguator, transactions);
+eq('a disambiguated same-name row survives', guarded.customers.some((c) => c.id === 5), true);
+eq('and is not listed as merged', guarded.merges.flatMap((m) => m.mergedIds).includes(5), false);
+
+// ---------------------------------------------------------------------------
 // 3. Profiles
 // ---------------------------------------------------------------------------
 
@@ -193,6 +254,27 @@ eq(
 );
 eq('Grace is the only lapsing regular', summary.lapsing.map((r) => r.displayName), ['Grace']);
 eq('lapsing is measured on full history, not the window', summary.lapsing[0]?.daysSinceLastVisit, 16);
+
+// The same summary over the canonicalised ledger — what the owner actually sees
+// once P1's exact-name duplicates are folded together. Mary appears ONCE with
+// her visits combined, instead of twice with them split.
+console.log('\nWeekly summary over the canonicalised ledger');
+const merged = buildRegularsSummary(canonical.customers, canonical.transactions, {
+  asOfDateKey: AS_OF,
+});
+eq('Mary is listed once, not twice', merged.regulars.filter((r) => /mary/i.test(r.displayName)).length, 1);
+eq(
+  'her visits are combined (07-21 + 07-22 + 07-23 + 07-24)',
+  merged.regulars.find((r) => /mary/i.test(r.displayName))?.visitCount,
+  4,
+);
+eq(
+  'and so is her spend (1000 + 50)',
+  merged.regulars.find((r) => /mary/i.test(r.displayName))?.totalSpend,
+  1050,
+);
+eq('2 named customers now, not 3', merged.namedCustomerCount, 2);
+eq('total named spend is unchanged by merging', merged.namedCustomerSpend, summary.namedCustomerSpend);
 
 // ---------------------------------------------------------------------------
 // 6. The README §5 guard
